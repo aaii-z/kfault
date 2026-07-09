@@ -153,7 +153,7 @@ def main():
 
     import itertools
 
-    # reasoning (r1) vs non-reasoning (v3) — same base model, cleanest contrast
+    # reasoning (r1) vs non-reasoning (v3): same base model, cleanest contrast
     models = {"v3": "deepseek/deepseek-chat", "r1": "deepseek/deepseek-r1"}
 
     for num, (tag, model_id) in itertools.product([1], models.items()):
