@@ -6,7 +6,7 @@ KernelBench pass rates. Built by concatenation, not str.format, so CUDA
 braces are never parsed as format fields.
 """
 
-_EXAMPLE_ARCH = '''import torch
+_EXAMPLE_ARCH = """import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -28,7 +28,7 @@ def get_inputs():
 
 def get_init_inputs():
     # randomly generate tensors required for initialization based on the model architecture
-    return []'''
+    return []"""
 
 _EXAMPLE_NEW_ARCH = '''import torch
 import torch.nn as nn
@@ -125,10 +125,14 @@ def strip_reasoning(text: str) -> str:
     message content. The thinking text can contain code fences, so this must
     run BEFORE strip_fences. An unclosed block means the completion was
     truncated mid-thought: nothing usable remains."""
+    import re
+
+    if "<reasoning>" in text and "</reasoning>" not in text:
+        return ""
+    text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
+    # Some providers return only a closing tag between thinking and answer.
     if "</reasoning>" in text:
-        return text.split("</reasoning>")[-1].strip()
-    if "<reasoning>" in text:
-        return text.split("<reasoning>")[0].strip()
+        text = text.split("</reasoning>")[-1]
     return text.strip()
 
 
@@ -142,6 +146,8 @@ def strip_fences(text: str) -> str:
     text = text.strip()
     if "```" not in text:
         return text
+    import re
+
     segments = text.split("```")
     pick = None
     for seg in segments:
@@ -150,7 +156,8 @@ def strip_fences(text: str) -> str:
             break
     if pick is None:
         pick = segments[1] if len(segments) > 1 else segments[0]
-    first_line, _, rest = pick.partition("\n")
-    if first_line.strip().isalpha():
+    first_line, separator, rest = pick.partition("\n")
+    language_tag = re.fullmatch(r"[A-Za-z][A-Za-z0-9_+.-]*", first_line.strip())
+    if separator and language_tag:
         pick = rest
     return pick.strip()

@@ -1,11 +1,11 @@
 [project]
-name = "cuda-kernel-demo"
+name = "kfault"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "openai>=1.0.0",
-    "datasets>=2.0.0",
-    "modal>=0.70.0",
+    "openai==2.41.1",
+    "datasets==5.0.0",
+    "modal==1.5.0",
 ]
 
 [tool.ruff]
@@ -13,3 +13,8 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# These files intentionally embed official/generated C++ source lines.
+"kfault/prompts.py" = ["E501"]
+"validate.py" = ["E501"]

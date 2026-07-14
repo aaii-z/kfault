@@ -316,7 +316,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cuda-kernel-demo"
+name = "kfault"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
@@ -327,9 +327,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "datasets", specifier = ">=2.0.0" },
-    { name = "modal", specifier = ">=0.70.0" },
-    { name = "openai", specifier = ">=1.0.0" },
+    { name = "datasets", specifier = "==5.0.0" },
+    { name = "modal", specifier = "==1.5.0" },
+    { name = "openai", specifier = "==2.41.1" },
 ]
 
 [[package]]

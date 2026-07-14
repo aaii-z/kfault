@@ -54,13 +54,13 @@ generate kernel
 
 ## 3. The pipeline (`pipeline.py`)
 
-One Modal function, `diagnose(problem, model, level)`, does everything on a GPU:
+The CPU `diagnose` function generates and caches code; a restricted GPU worker
+classifies and benchmarks it:
 
 1. **Prompt** — the *official* KernelBench one-shot CUDA/fp32 prompt, so our
    generations are directly comparable to published pass rates.
-2. **Generate** — call the model via OpenRouter (temperature 0). We compare a
-   **reasoning** model (DeepSeek **R1**) against a **non-reasoning** one
-   (DeepSeek **V3**) — same base, cleanest contrast.
+2. **Generate** — call DeepSeek V3.2 through AWS Bedrock. The two arms use the
+   same model with `reasoning_effort` set to `high` or `none`.
 3. **Stage 1 — syntactic:** `exec` the code; `load_inline` compiles the CUDA.
    A build/import error ⇒ `syntactic`.
 4. **Stage 2 — runtime:** run once on the standard input and
@@ -72,9 +72,10 @@ One Modal function, `diagnose(problem, model, level)`, does everything on a GPU:
 6. **Stage 4 — silent:** the fixed stress **battery** (below). Any *core*
    failure ⇒ `silent`; otherwise ⇒ `pass`.
 
-Results are cached as one JSON per `(level, problem, model)` in a Modal Volume,
-so re-runs don't re-spend API/GPU. A single command sweeps many problems in
-parallel and prints the category table + false-pass rate.
+Raw generations and classifications are cached separately in a Modal Volume.
+Changing GPU, seed, or sanitizer settings reuses the paid generation while
+creating a correctly keyed classification. A single command sweeps many
+problems in parallel and prints the category table + false-pass rate.
 
 ### 3.1 The silent-failure battery (Stage 4)
 
@@ -89,7 +90,10 @@ means `silent`:
 | `fresh_seed`      | 3 new random draws — luck / hardcoded output      |
 | `non_contig`      | non-contiguous inputs — stride assumptions        |
 | `nondeterministic`| same input twice must agree — races / uninit / missing `__syncthreads` |
+| `zeros`           | zero floating inputs — hidden value assumptions   |
+| `small_magnitude` | near-zero values — precision / branch errors      |
 | `extreme`         | ×100 magnitude inputs — overflow / instability    |
+| `custom_*`        | problem-defined empty/odd/boundary shapes         |
 
 **ROBUSTNESS** — reported separately, **not** counted as silent (KernelBench is
 fp32-only, so counting these would inflate the number):
@@ -105,8 +109,9 @@ where the kernel happens to match PyTorch on the first draw.
 ### 3.2 Validation harness (`validate.py`) — why you can trust the labels
 
 Before trusting any number, we feed the classifier **hand-crafted kernels of
-known category** and assert it labels each correctly. Current status: **5/5**
-(`pass`, `syntactic`, `runtime`, `functional`, `silent`). Each case runs in its
+known category** and assert it labels each correctly. Current status:
+**10/10**, including weights, input mutation, structured outputs, nested
+inputs, and custom boundary shapes. Each case runs in its
 own container because a real `runtime` (illegal memory) corrupts the CUDA
 context for the rest of the process.
 
@@ -326,32 +331,30 @@ probe is exercised by the validation harness.
 
 ## 7. Known limitations & next steps
 
-1. **Weight synchronization (important).** The harness does **not** seed the RNG
-   or copy parameters, so for parametric layers (Linear/Conv) the reference
-   `Model` and the generated `ModelNew` can hold **different random weights**.
-   This can mislabel correct kernels as `functional`, and makes `silent`/`pass`
-   reachable only when outputs coincide despite differing weights (as in p9).
-   **Fix:** `torch.manual_seed(seed)` before constructing each model and before
-   `get_inputs()`, or copy the reference `state_dict` into `ModelNew` — exactly
-   what the official KernelBench eval does. *Until this is fixed the Level-2
-   category counts are not trustworthy.*
-2. **compute-sanitizer is a no-op on Modal's T4** ("Device not supported"); the
+1. **Input shapes are problem-specific.** The generic battery covers fresh
+   draws, strides, zero/small/extreme floating values, and determinism. Problems
+   should define `get_stress_inputs()` for valid empty, odd, broadcasting, and
+   boundary shapes that cannot be inferred safely.
+2. **compute-sanitizer may be unavailable on Modal's T4** ("Device not
+   supported"); the
    stage self-disables and degrades gracefully. Try a bare-metal GPU type
    (L4/A10G/A100) in the RQ4 multi-GPU pass to actually exercise it.
 3. **Scale.** Sweep all of Level 2 (100 problems) + Level 3 so the silent/pass
    denominator supports statistics (RQ2/RQ3).
 4. **Multiple samples per problem** (temperature > 0, k attempts) — single-shot
    temp-0 yields very few standard-passing kernels.
-5. **Runtime sub-typing.** Split Python-level runtime errors (e.g. a `TypeError`
-   in `forward`) from CUDA-level faults for cleaner analysis.
+5. **Adversarial native code.** Generated CUDA/C++ still runs as native code.
+   Modal isolation limits its network, credentials, resources, and lifetime,
+   but the benchmark assumes optimization attempts rather than deliberately
+   hostile extensions.
 
 ---
 
 ## 8. How to reproduce
 
 ```bash
-# validate the classifier first (cheap, 5 containers)
-uv run modal run validate.py                          # expect 5/5
+# validate the classifier first (10 regression cases)
+uv run modal run validate.py                          # expect 10/10
 
 # run the taxonomy over problems (cached; re-runs are free)
 uv run modal run pipeline.py --level 2 --problems 1-10

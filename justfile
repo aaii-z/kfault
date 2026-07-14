@@ -3,10 +3,16 @@
     uv run modal token new
 
 @run:
-    uv run modal run demo.py
+    uv run modal run pipeline.py
+
+@validate:
+    uv run modal run validate.py
+
+@test:
+    uv run python -m unittest discover -s tests -v
 
 @lint:
-    uv run ruff check .
+    uvx ruff==0.12.4 check .
 
 @format:
-    uv run ruff format .
+    uvx ruff==0.12.4 format .

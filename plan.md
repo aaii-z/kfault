@@ -1,5 +1,9 @@
 # kfault — Project Plan
 
+> Historical planning document: current implementation and reproduction
+> details live in `README.md` and `docs/completion-plan.md`. Unchecked prototype
+> items below do not describe the current code.
+
 **Title:** A Systematic Taxonomy of Correctness Failures in LLM-Generated GPU Kernels
 **Author:** Ali Ansari (100526858)
 **Timeline:** ~16 weeks (mid-May → end of August 2026)

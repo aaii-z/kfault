@@ -1,5 +1,10 @@
 # kfault - First Collection Results (2026-07-09)
 
+> Historical snapshot: these numbers were produced before the July 2026
+> classifier hardening (isolated inputs, expanded battery, structured outputs,
+> pinned runtime, and schema-v3 cache). Reclassify the saved generations before
+> using them as final results; do not mix these labels with new-schema labels.
+
 ## Setup
 
 - **Model:** DeepSeek V3.2 (`deepseek.v3-v1:0`) on AWS Bedrock, us-west-2.
@@ -177,8 +182,9 @@ from reasoning.
 
 ## Where the data lives
 
-Modal volume `kfault-results`, one JSON per (level, problem, arm, sample).
-Each file stores: prompt, raw LLM output (including the full reasoning
+Modal volume `kfault-results`. New runs store generation artifacts under
+`generations/` and independently keyed classification artifacts under
+`classifications/`. Each classification stores: prompt, raw LLM output,
 trace), extracted kernel code, category + failure detail, robustness flags,
 timing (ref_ms / kernel_ms / speedup), seeds and settings, timestamps, and
 (for future runs) token usage and generation latency.

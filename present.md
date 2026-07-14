@@ -48,7 +48,7 @@ KernelBench task ─► LLM (R1 vs V3) ─► Stage 1 compile
 - `fresh_seed` — new random draws (hardcoded output)
 - `fp16` — dtype (reported separately, **not** counted as silent)
 
-**Validated:** 5/5 on hand-crafted kernels of known category.
+**Validated:** 10/10 known-category and regression cases.
 
 ---
 
@@ -127,9 +127,9 @@ Same code, "correct" on the test, silently broken in production.
 
 ## Slide 9 — Honesty slide (limitations / next)
 
-- **Weight sync:** reference vs generated models aren't seeded to share weights
-  yet → Level-2 `functional` counts not final (fix: seed like KernelBench).
-- **compute-sanitizer** doesn't run on Modal's T4 (self-disables); use L4/A100.
+- **Shape coverage:** generic stress cannot infer every model's valid boundary
+  shapes; add problem-defined `get_stress_inputs()` cases.
+- **compute-sanitizer** may be unavailable on Modal's T4; use L4/A100.
 - **Scale up:** full Level 2 + 3, multiple samples per problem, for real stats.
 
 ---

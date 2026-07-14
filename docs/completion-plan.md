@@ -1,29 +1,29 @@
 # kfault — Completion Plan (as of 2026-07-09)
 
+Operational commands and the complete current research protocol are maintained
+in [`IMPLEMENTATION_AND_RESEARCH_GUIDE.md`](IMPLEMENTATION_AND_RESEARCH_GUIDE.md).
+
 Roadmap from current state to (a) dissertation submission end of August 2026
 and (b) a published conference/workshop paper or poster. Complements `plan.md`
 (the original 16-week task list) — this is the *remaining* critical path.
 
 ## Where we are (~week 8 of 16)
 
-**Done (Phases 1–2):** Modal harness; generation via OpenRouter with the
+**Done (Phases 1–2):** Modal harness; generation via AWS Bedrock with the
 official KernelBench one-shot prompt; full 4-stage classifier in `pipeline.py`
 (syntactic / runtime / functional / silent / pass) incl. the Stage-4 silent
 battery; result caching in the `kfault-results` volume; T5 validation harness
-(`validate.py`, 5/5 known-category kernels).
+(`validate.py`, now 10 known-category/regression cases).
 
 **Not done:** real data collection (only ~10-problem pilots), all analysis
 (T9–T12), all writing.
 
-**Blockers that gate the data:**
+**Remaining data-collection constraints:**
 
-1. **Weight-sync gap** — `classify()` built `Model` / `ModelNew` without
-   seeding or weight copy, so problems with learnable params get garbage
-   `functional`/`silent` labels.
-2. **Single sample per problem** — `temperature=0`, one generation per
+1. **Single sample per problem** — `temperature=0`, one generation per
    (problem, model): the RQ2 false-pass rate has no real denominator and
    R1-vs-V3 tests lack power.
-3. **compute-sanitizer self-disables on Modal T4** — Stage 2b degrades
+2. **compute-sanitizer may be unavailable on Modal T4** — Stage 2b degrades
    silently; run diagnostics on L4/A100 or document the limitation.
 
 ## Step 1 — Fix the pipeline (week of Jul 9, ~2–3 days) — DONE 2026-07-09
@@ -51,8 +51,9 @@ battery; result caching in the `kfault-results` volume; T5 validation harness
       T4 and state in the paper that Stage 2b covers only crash-visible
       runtime failures.
 
-**First action of Step 2:** re-run the existing Level-2 pilot with `--force`
-(free re-classification) — the pre-fix cached labels are untrustworthy.
+**First action of Step 2:** reclassify the saved Level-2 generations with the
+schema-v3 classifier. The pipeline automatically imports legacy responses only
+when their model, arm, sample, temperature, and exact prompt match.
 
 ## Step 2 — Full data collection (mid-Jul → end of Jul)
 
@@ -60,12 +61,10 @@ Scope decided 2026-07-09: **30 random Level-2 problems** (seed 42), 2 models,
 **3 samples** (sample 0 greedy + 2 at temp 0.7) = 180 runs, est. $10-20.
 Problem list: 1,4,5,12,14,15,18,26,28,29,30,32,36,54,55,58,65,70,72,76,78,
 82,85,87,89,90,94,95,96,98.
-**ON HOLD:** user may switch the LLM provider from OpenRouter to AWS Bedrock
-before starting. CPU/GPU split is done and smoke-tested (GPU no longer idles
-during generation).
+The provider is AWS Bedrock. CPU/GPU separation is complete, so the GPU no
+longer idles during generation.
 
-- [ ] Run the 30-problem x 3-sample collection (command ready, awaiting go +
-      provider decision).
+- [ ] Run the 30-problem x 3-sample collection.
 - [ ] RQ4 bonus: re-run the battery under a second GPU type
       (`KFAULT_GPU=L4/A100`) — hardware-divergent correctness is a headline
       figure if it appears.

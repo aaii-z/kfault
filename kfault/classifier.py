@@ -15,6 +15,7 @@ problems with learnable params give the two models different weights.
 
 from kfault.battery import silent_battery
 from kfault.benchmark import benchmark
+from kfault.comparison import clone_tree, compare_outputs, map_tensors
 from kfault.sanitizer import run_sanitizer
 
 
@@ -30,6 +31,16 @@ def classify(
 
     extra: dict = {}
 
+    def failure(category, stage, error):
+        detail = str(error)[:1000]
+        error_type = type(error).__name__ if isinstance(error, BaseException) else None
+        extra["failure"] = {
+            "stage": stage,
+            "error_type": error_type,
+            "message": detail,
+        }
+        return category, detail, extra
+
     # Stage 1: SYNTACTIC. Does the generated code build?
     kernel_ns: dict = {}
     problem_ns: dict = {}
@@ -38,6 +49,7 @@ def classify(
         Model = problem_ns["Model"]
         get_init_inputs = problem_ns.get("get_init_inputs", lambda: [])
         get_inputs = problem_ns.get("get_inputs", lambda: [])
+        get_stress_inputs = problem_ns.get("get_stress_inputs")
         torch.manual_seed(seed)
         init_inputs = get_init_inputs()
     except Exception as e:
@@ -50,63 +62,113 @@ def classify(
     def fresh_inputs():
         _draw[0] += 1
         torch.manual_seed(seed + _draw[0])
-        return [
-            x.cuda() if isinstance(x, torch.Tensor) else x for x in get_inputs()
-        ]
+        return map_tensors(get_inputs(), lambda tensor: tensor.cuda())
 
     torch.manual_seed(seed)
-    ref_model = Model(*init_inputs).cuda().eval()
+    ref_model = Model(*clone_tree(init_inputs)).cuda().eval()
 
     try:
-        exec(generated_code, kernel_ns)  # load_inline compiles here
+        compiled_code = compile(generated_code, "<generated_kernel>", "exec")
+    except Exception as error:
+        return failure("syntactic", "python_parse", error)
+
+    try:
+        exec(compiled_code, kernel_ns)  # load_inline compiles here
+    except Exception as error:
+        return failure("syntactic", "generated_code_execution_or_build", error)
+
+    try:
         ModelNew = kernel_ns["ModelNew"]
+    except Exception as error:
+        return failure("syntactic", "model_lookup", error)
+
+    try:
         torch.manual_seed(seed)  # same weights as ref_model
-        kernel_model = ModelNew(*init_inputs).cuda().eval()
-    except Exception as e:
-        return "syntactic", str(e)[:500], extra
+        kernel_model = ModelNew(*clone_tree(init_inputs)).cuda().eval()
+    except Exception as error:
+        return failure("runtime", "model_initialization", error)
 
     # Stage 2a: RUNTIME. Does it crash on standard input?
     std_inputs = fresh_inputs()
     try:
         with torch.no_grad():
-            kernel_out = kernel_model(*std_inputs)
-            ref_out = ref_model(*std_inputs)
+            ref_out = ref_model(*clone_tree(std_inputs))
+            kernel_out = kernel_model(*clone_tree(std_inputs))
         torch.cuda.synchronize()  # surface async kernel faults here
-    except Exception as e:
-        return "runtime", str(e)[:500], extra
-
-    # kernel executes: time it against PyTorch on the standard input
-    try:
-        extra["timing"] = benchmark(ref_model, kernel_model, std_inputs)
-    except Exception:
-        extra["timing"] = None
+    except Exception as error:
+        return failure("runtime", "standard_forward", error)
 
     # Stage 2b: RUNTIME. Memory errors under compute-sanitizer?
     if use_sanitizer:
-        errors, detail = run_sanitizer(problem_code, generated_code, seed)
-        extra["sanitizer_errors"] = errors
-        if errors:
-            return "runtime", f"compute-sanitizer: {errors} error(s) {detail}", extra
+        sanitizer = run_sanitizer(problem_code, generated_code, seed)
+        extra["sanitizer"] = sanitizer
+        # Compatibility field retained for existing result analysis scripts.
+        extra["sanitizer_errors"] = sanitizer["errors"]
+        if sanitizer["status"] in {"violation", "kernel_error"}:
+            detail = sanitizer["detail"]
+            if sanitizer["log_excerpt"]:
+                detail += f": {sanitizer['log_excerpt']}"
+            return failure("runtime", f"sanitizer_{sanitizer['status']}", detail)
+        if sanitizer["status"] != "clean":
+            extra.setdefault("validation_warnings", []).append(
+                f"sanitizer_{sanitizer['status']}"
+            )
 
     # Stage 3: FUNCTIONAL. Correct on the standard input?
-    if ref_out.shape != kernel_out.shape:
-        return (
-            "functional",
-            f"shape mismatch {tuple(kernel_out.shape)} vs {tuple(ref_out.shape)}",
-            extra,
-        )
-    if not torch.allclose(ref_out.float(), kernel_out.float(), atol=1e-3, rtol=1e-3):
-        return "functional", "mismatch on standard input", extra
+    outputs_agree, mismatch = compare_outputs(ref_out, kernel_out)
+    if not outputs_agree:
+        return failure("functional", "standard_output_comparison", mismatch)
+
+    custom_stress_inputs = None
+    if get_stress_inputs is not None:
+
+        def custom_stress_inputs():
+            torch.manual_seed(seed + 10_000)
+            variants = get_stress_inputs()
+            if isinstance(variants, dict):
+                items = variants.items()
+            else:
+                items = enumerate(variants)
+            return {
+                str(name): map_tensors(inputs, lambda tensor: tensor.cuda())
+                for name, inputs in items
+            }
 
     # Stage 4: SILENT. Wrong under the stress battery?
-    core, robust = silent_battery(
-        ref_model, kernel_model, fresh_inputs, init_inputs, Model, seed
+    core, robust, battery_diagnostics = silent_battery(
+        ref_model,
+        kernel_model,
+        fresh_inputs,
+        init_inputs,
+        Model,
+        seed,
+        custom_stress_inputs=custom_stress_inputs,
     )
     extra["robustness_flags"] = robust
+    extra["battery_diagnostics"] = battery_diagnostics
+
+    # Only correct kernels are meaningful to benchmark. Timing after all probes
+    # also prevents repeated calls from changing state observed by validation.
     if core:
-        return "silent", ", ".join(core), extra
+        extra["timing"] = None
+        extra["timing_skipped"] = "kernel failed the stress battery"
+    else:
+        try:
+            extra["timing"] = benchmark(ref_model, kernel_model, std_inputs)
+        except Exception as error:
+            extra["timing"] = None
+            extra["timing_error"] = {
+                "error_type": type(error).__name__,
+                "message": str(error)[:1000],
+            }
+
+    if core:
+        return failure("silent", "stress_battery", ", ".join(core))
 
     detail = "survived core battery" + (
         f" (robustness flags: {', '.join(robust)})" if robust else ""
     )
+    warnings = extra.get("validation_warnings", [])
+    if warnings:
+        detail += f" (warnings: {', '.join(warnings)})"
     return "pass", detail, extra

@@ -1,23 +1,15 @@
-"""Stage 2b: run a kernel once under compute-sanitizer memcheck.
+"""Run one generated-kernel invocation under compute-sanitizer memcheck."""
 
-The torch extension build is cached in TORCH_EXTENSIONS_DIR, so the kernel
-compiled by Stage 1 is reused here. This is one cheap forward pass under
-memory checking, in a subprocess.
-"""
-
-# Driver executed under compute-sanitizer. Seeded like the classifier.
-DRIVER = r'''
+DRIVER = r"""
 import os
 import torch
 
 seed = int(os.environ.get("KFAULT_SEED", "42"))
-
 problem = open(os.environ["KFAULT_PROBLEM"]).read()
 kernel = open(os.environ["KFAULT_KERNEL"]).read()
 
 pns = {}
 exec(problem, pns)
-Model = pns["Model"]
 get_init_inputs = pns.get("get_init_inputs", lambda: [])
 get_inputs = pns.get("get_inputs", lambda: [])
 torch.manual_seed(seed)
@@ -30,30 +22,135 @@ torch.manual_seed(seed)
 kernel_model = ModelNew(*init_inputs).cuda().eval()
 
 torch.manual_seed(seed + 1)
-inputs = [x.cuda() if isinstance(x, torch.Tensor) else x for x in get_inputs()]
+def map_tensors(value, transform):
+    if isinstance(value, torch.Tensor):
+        return transform(value)
+    if isinstance(value, dict):
+        return {key: map_tensors(item, transform) for key, item in value.items()}
+    if isinstance(value, list):
+        return [map_tensors(item, transform) for item in value]
+    if isinstance(value, tuple):
+        return tuple(map_tensors(item, transform) for item in value)
+    return value
+
+inputs = map_tensors(get_inputs(), lambda tensor: tensor.cuda())
 with torch.no_grad():
     kernel_model(*inputs)
 torch.cuda.synchronize()
-'''
+"""
 
-# Tool-level failure markers: sanitizer could not run at all (e.g. Modal T4
-# rejects it with "Device not supported"). Not kernel errors.
 _UNAVAILABLE_MARKERS = (
     "Device not supported",
     "not supported by",
     "Failed to initialize",
     "does not have permission",
-    "Unsupported",
+    "No attachable process found",
+)
+
+_VIOLATION_MARKERS = (
+    "Invalid ",
+    "misaligned",
+    "out-of-bounds",
+    "Race reported",
+    "Memory leak",
+    "leaked",
+)
+
+_KERNEL_ERROR_MARKERS = (
+    "CUDA error",
+    "RuntimeError",
+    "Traceback (most recent call last)",
+    "an illegal memory access was encountered",
+    "misaligned address",
+    "launch failed",
 )
 
 
-def run_sanitizer(problem_code: str, kernel_code: str, seed: int = 42):
-    """Return (errors, detail). errors is None when the tool could not run;
-    the caller then skips Stage 2b instead of mislabelling the kernel."""
-    import os
+def _result(status, detail, *, errors=None, returncode=None, log_excerpt=""):
+    return {
+        "status": status,
+        "errors": errors,
+        "detail": detail,
+        "returncode": returncode,
+        "log_excerpt": log_excerpt,
+    }
+
+
+def _excerpt(output: str, limit: int = 1200) -> str:
+    """Return the most useful bounded section of sanitizer output."""
+    starts = [
+        output.find(marker)
+        for marker in _VIOLATION_MARKERS + _KERNEL_ERROR_MARKERS
+        if output.find(marker) >= 0
+    ]
+    start = min(starts) if starts else max(0, len(output) - limit)
+    return output[start : start + limit].strip().replace("\n", " ")
+
+
+def parse_sanitizer_output(output: str, returncode: int):
+    """Classify completed sanitizer output separately from process launching."""
     import re
+
+    excerpt = _excerpt(output)
+    for marker in _UNAVAILABLE_MARKERS:
+        if marker in output:
+            return _result(
+                "unavailable",
+                f"compute-sanitizer unavailable: {marker}",
+                returncode=returncode,
+                log_excerpt=excerpt,
+            )
+
+    match = re.search(r"ERROR SUMMARY:\s+(\d+)\s+error", output)
+    errors = int(match.group(1)) if match else None
+    has_violation = any(marker in output for marker in _VIOLATION_MARKERS)
+
+    if has_violation or (errors is not None and errors > 0):
+        return _result(
+            "violation",
+            "compute-sanitizer detected a memory violation",
+            errors=errors if errors is not None else 1,
+            returncode=returncode,
+            log_excerpt=excerpt,
+        )
+
+    if returncode == 0:
+        return _result(
+            "clean",
+            "compute-sanitizer reported no memory errors",
+            errors=errors if errors is not None else 0,
+            returncode=0,
+        )
+
+    if any(marker in output for marker in _KERNEL_ERROR_MARKERS):
+        return _result(
+            "kernel_error",
+            "kernel process failed under compute-sanitizer",
+            errors=errors,
+            returncode=returncode,
+            log_excerpt=excerpt,
+        )
+
+    return _result(
+        "tool_error",
+        "compute-sanitizer exited without a recognizable diagnostic",
+        errors=errors,
+        returncode=returncode,
+        log_excerpt=excerpt,
+    )
+
+
+def run_sanitizer(problem_code: str, kernel_code: str, seed: int = 42):
+    """Return a structured sanitizer result.
+
+    Status is one of ``clean``, ``violation``, ``kernel_error``, ``timeout``,
+    ``unavailable``, or ``tool_error``. Only violations and kernel errors are
+    attributed to the generated kernel by the classifier.
+    """
+    import os
     import shutil
     import subprocess
+    import sys
     import tempfile
 
     sanitizer = shutil.which("compute-sanitizer") or (
@@ -62,18 +159,19 @@ def run_sanitizer(problem_code: str, kernel_code: str, seed: int = 42):
         else None
     )
     if sanitizer is None:
-        return None, "compute-sanitizer not found"
+        return _result("unavailable", "compute-sanitizer not found")
 
     with tempfile.TemporaryDirectory() as tmp:
         prob_path = os.path.join(tmp, "problem.py")
         kern_path = os.path.join(tmp, "kernel.py")
         drv_path = os.path.join(tmp, "driver.py")
-        with open(prob_path, "w") as f:
-            f.write(problem_code)
-        with open(kern_path, "w") as f:
-            f.write(kernel_code)
-        with open(drv_path, "w") as f:
-            f.write(DRIVER)
+        for path, content in (
+            (prob_path, problem_code),
+            (kern_path, kernel_code),
+            (drv_path, DRIVER),
+        ):
+            with open(path, "w") as file:
+                file.write(content)
 
         env = dict(
             os.environ,
@@ -85,44 +183,32 @@ def run_sanitizer(problem_code: str, kernel_code: str, seed: int = 42):
             proc = subprocess.run(
                 [
                     sanitizer,
-                    "--tool", "memcheck",
-                    "--error-exitcode", "1",
-                    "--target-processes", "all",
-                    "python", drv_path,
+                    "--tool",
+                    "memcheck",
+                    "--error-exitcode",
+                    "86",
+                    "--target-processes",
+                    "all",
+                    sys.executable,
+                    drv_path,
                 ],
                 env=env,
                 capture_output=True,
                 text=True,
                 timeout=300,
             )
-        except Exception as e:
-            return None, f"sanitizer launch failed: {str(e)[:200]}"
+        except subprocess.TimeoutExpired as error:
+            output = (error.stdout or "") + (error.stderr or "")
+            return _result(
+                "timeout",
+                "compute-sanitizer exceeded 300 seconds",
+                log_excerpt=_excerpt(output),
+            )
+        except Exception as error:
+            return _result(
+                "tool_error",
+                f"sanitizer launch failed: {type(error).__name__}: {error}"[:500],
+            )
 
-        out = (proc.stdout or "") + (proc.stderr or "")
-
-        for marker in _UNAVAILABLE_MARKERS:
-            if marker in out:
-                return None, f"sanitizer unavailable ({marker})"
-
-        m = re.search(r"ERROR SUMMARY:\s+(\d+)\s+error", out)
-        if m:
-            errors = int(m.group(1))
-        else:
-            # no summary line: non-zero exit only when --error-exitcode fired
-            errors = 1 if proc.returncode != 0 else 0
-
-        # trust a positive count only with a real violation block in the log
-        violation = any(
-            k in out
-            for k in ("Invalid ", "misaligned", "out-of-bounds", "Fatal", "leaked")
-        )
-        if errors and not violation:
-            return None, "sanitizer reported non-memory error; ignoring"
-
-        snippet = ""
-        idx = out.find("Invalid ")
-        if idx == -1:
-            idx = out.find("========= ")
-        if idx != -1:
-            snippet = out[idx:idx + 800].replace("\n", " ")
-        return errors, snippet
+        output = (proc.stdout or "") + (proc.stderr or "")
+        return parse_sanitizer_output(output, proc.returncode)

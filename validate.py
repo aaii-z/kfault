@@ -161,12 +161,143 @@ class ModelNew(nn.Module):
 '''
 
 
+# Regression case for isolated inputs: this implementation is numerically
+# correct but mutates its argument. It must not alter the reference input.
+PROBLEM_MUTATING = """
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    def forward(self, x):
+        return x + 1
+
+
+def get_inputs():
+    return [torch.randn(64, 64)]
+"""
+
+KERNEL_MUTATING = """
+import torch.nn as nn
+
+
+class ModelNew(nn.Module):
+    def forward(self, x):
+        return x.add_(1)
+"""
+
+
+# Regression case for structured outputs and integer-valued inputs. The stress
+# battery must keep embedding indices integral while converting/scaling floats.
+PROBLEM_STRUCTURED = """
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embedding = nn.Embedding(32, 8)
+
+    def forward(self, indices):
+        values = self.embedding(indices)
+        return (values, {"indices": indices})
+
+
+def get_inputs():
+    return [torch.randint(0, 32, (16, 4))]
+"""
+
+KERNEL_STRUCTURED = """
+import torch.nn as nn
+
+
+class ModelNew(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embedding = nn.Embedding(32, 8)
+
+    def forward(self, indices):
+        values = self.embedding(indices)
+        return (values, {"indices": indices})
+"""
+
+
+# Problem-defined shape variants exercise empty and odd boundary sizes without
+# guessing which dimensions are valid for arbitrary KernelBench problems.
+PROBLEM_CUSTOM_STRESS = """
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    def forward(self, x):
+        return x * 2
+
+
+def get_inputs():
+    return [torch.randn(8, 16)]
+
+
+def get_stress_inputs():
+    return {
+        "empty_batch": [torch.randn(0, 16)],
+        "odd_shape": [torch.randn(7, 13)],
+        "single_element": [torch.randn(1, 1)],
+    }
+"""
+
+KERNEL_CUSTOM_STRESS = """
+import torch.nn as nn
+
+
+class ModelNew(nn.Module):
+    def forward(self, x):
+        return x * 2
+"""
+
+
+PROBLEM_NESTED_INPUT = """
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    def forward(self, payload):
+        return payload["x"] * payload["scale"]
+
+
+def get_inputs():
+    return [{"x": torch.randn(4, 4), "scale": 2.0}]
+"""
+
+KERNEL_NESTED_INPUT = """
+import torch.nn as nn
+
+
+class ModelNew(nn.Module):
+    def forward(self, payload):
+        return payload["x"] * payload["scale"]
+"""
+
+
 # name -> (expected category, problem, kernel)
 CASES = {
     # correct and contiguity-safe
     "pass": ("pass", PROBLEM, _kernel("out[i] = a[i] + b[i];", contiguous=True)),
     # correct kernel on a problem with learnable weights
     "pass_weights": ("pass", PROBLEM_LINEAR, KERNEL_LINEAR),
+    # correct implementation that mutates its private input copy
+    "pass_mutating": ("pass", PROBLEM_MUTATING, KERNEL_MUTATING),
+    # tuple/dict output with integer embedding indices
+    "pass_structured": ("pass", PROBLEM_STRUCTURED, KERNEL_STRUCTURED),
+    # optional problem-defined empty and boundary shapes
+    "pass_custom_stress": (
+        "pass",
+        PROBLEM_CUSTOM_STRESS,
+        KERNEL_CUSTOM_STRESS,
+    ),
+    "pass_nested_input": ("pass", PROBLEM_NESTED_INPUT, KERNEL_NESTED_INPUT),
     # `floatt` is not a type: fails to compile
     "syntactic": (
         "syntactic",
