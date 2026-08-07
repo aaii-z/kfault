@@ -322,6 +322,22 @@ CASES = {
         PROBLEM,
         _kernel("out[i] = a[i] + b[i];", contiguous=False),
     ),
+    # numerically correct but far too slow to evaluate: one classification makes
+    # ~90 forward calls, so a kernel like this used to eat the whole container
+    # timeout and return no row at all (batch 01 p91, batch 02 p42/p52). Only
+    # thread 0 spins: 512x512 inputs mean 1024 blocks, and spinning in every
+    # thread would serialize them into an unbounded delay instead of a fixed one.
+    # 1.6e10 cycles is over 5s on both T4 (~1.59GHz) and L4 (~2.04GHz).
+    "runtime_too_slow": (
+        "runtime",
+        PROBLEM,
+        _kernel(
+            "long long t0 = clock64();"
+            " if (i == 0) { while (clock64() - t0 < 16000000000LL) { } }"
+            " out[i] = a[i] + b[i];",
+            contiguous=True,
+        ),
+    ),
 }
 
 
@@ -333,6 +349,15 @@ def check_case(name: str, problem_code: str, kernel_code: str):
     torch.backends.cudnn.allow_tf32 = False
     category, detail, extra = classify(kernel_code, problem_code, use_sanitizer=True)
     return {"name": name, "category": category, "detail": detail, "extra": extra}
+
+
+# Cases where the category alone is not enough. "runtime" is reached by several
+# routes (illegal access, bad init, sanitizer), so a slow kernel could be right
+# for the wrong reason; pin the stage that must have produced it.
+EXPECTED_STAGE = {
+    "runtime_too_slow": "forward_time_limit",
+    "runtime": "standard_forward",
+}
 
 
 @app.local_entrypoint()
@@ -349,9 +374,17 @@ def main():
         r = h.get()
         got = r["category"]
         ok = got == expected
+        wanted_stage = EXPECTED_STAGE.get(name)
+        got_stage = (r["extra"].get("failure") or {}).get("stage")
+        if ok and wanted_stage and got_stage != wanted_stage:
+            ok = False
+            r = {**r, "detail": f"stage={got_stage}, expected {wanted_stage}"}
         passed += ok
         mark = "OK " if ok else "XX "
-        print(f"{mark} case={name:<13} expected={expected:<10} got={got:<10}")
+        stage_note = f" stage={got_stage}" if wanted_stage else ""
+        print(
+            f"{mark} case={name:<17} expected={expected:<10} got={got:<10}{stage_note}"
+        )
         if not ok:
             print(f"      detail: {r['detail'][:1000]}")
 

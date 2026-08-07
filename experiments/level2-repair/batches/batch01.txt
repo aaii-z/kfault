@@ -1,0 +1,15 @@
+# Level 2 batch 01 of 10 -- 10 problems, stratified across the level
+# problems: 1,11,21,31,41,51,61,71,81,91
+#
+#   p1   1_Conv2D_ReLU_BiasAdd
+#   p11  11_ConvTranspose2d_BatchNorm_Tanh_MaxPool_GroupNorm
+#   p21  21_Conv2d_Add_Scale_Sigmoid_GroupNorm
+#   p31  31_Conv2d_Min_Add_Multiply
+#   p41  41_Gemm_BatchNorm_GELU_ReLU
+#   p51  51_Gemm_Subtract_GlobalAvgPool_LogSumExp_GELU_ResidualAdd
+#   p61  61_ConvTranspose3d_ReLU_GroupNorm
+#   p71  71_Conv2d_Divide_LeakyReLU
+#   p81  81_Gemm_Swish_Divide_Clamp_Tanh_Clamp
+#   p91  91_ConvTranspose2d_Softmax_BiasAdd_Scaling_Sigmoid
+
+1,11,21,31,41,51,61,71,81,91

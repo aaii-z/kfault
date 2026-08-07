@@ -9,6 +9,55 @@ class _KernelProbeError(Exception):
     """The generated model crashed on an input accepted by the reference."""
 
 
+def _is_out_of_memory(error) -> bool:
+    """True when a probe died from GPU memory pressure rather than a real fault.
+
+    Checks the message rather than the type: the probe wrappers re-raise as
+    _ReferenceProbeError / _KernelProbeError, so the original OutOfMemoryError
+    class is no longer available by the time this runs.
+    """
+    return "out of memory" in str(error).lower()
+
+
+def _is_dtype_unsupported(error) -> bool:
+    """True when the kernel refused a dtype rather than computing it wrongly.
+
+    An extension written against ``data_ptr<float>()`` raises before a thread
+    runs: that is the declared FP32 contract, not a fault. Counting it as one
+    flagged every passing kernel, and a probe with no variance measures the
+    harness. Only a kernel that runs in half and returns wrong numbers earns a
+    flag.
+    """
+    message = str(error).lower()
+    if "data_ptr<float>" in message or "data_ptr<c10::half>" in message:
+        return True
+
+    # A kernel may enforce its own contract with TORCH_CHECK rather than let
+    # ATen raise; those messages never mention "half". Only the fp16 probe
+    # reaches here, so a complaint about float32 is a refusal by definition.
+    if "float32" in message or "fp32" in message or "torch.float" in message:
+        if any(
+            word in message
+            for word in ("must", "only", "expect", "require", "support", "invalid")
+        ):
+            return True
+
+    if "half" not in message and "c10::half" not in message:
+        return False
+    return any(
+        marker in message
+        for marker in (
+            "expected scalar type",  # expected scalar type Float but found Half
+            "not implemented for",  # "..." not implemented for 'Half'
+            "should be the same",  # Input type and bias type should be the same
+            "same dtype",  # expected m1 and m2 to have the same dtype
+            "expected all tensors to be on the same",
+            "invalid argument",
+            "incompatible function arguments",
+        )
+    )
+
+
 def silent_battery(
     ref_model,
     kernel_model,
@@ -34,6 +83,15 @@ def silent_battery(
             "message": str(error)[:1000],
         }
 
+    def release():
+        """Drop cached blocks between probes.
+
+        Nothing frees a probe's inputs and activations until silent_battery
+        returns, so on a large problem they accumulate until the GPU OOMs
+        mid-battery. Releasing keeps peak memory at roughly one probe.
+        """
+        torch.cuda.empty_cache()
+
     def agree(inputs, ref_m, ker_m, atol=1e-3, rtol=1e-3):
         with torch.no_grad():
             try:
@@ -46,7 +104,25 @@ def silent_battery(
                 raise _KernelProbeError(str(error)) from error
         return compare_outputs(reference, candidate, atol=atol, rtol=rtol)
 
-    def check(name, inputs, *, ref_m=ref_model, ker_m=kernel_model, target=core):
+    def check(
+        name,
+        inputs,
+        *,
+        ref_m=ref_model,
+        ker_m=kernel_model,
+        target=core,
+        skip_if=None,
+        skip_status="skipped",
+    ):
+        try:
+            return _check(name, inputs, ref_m, ker_m, target, skip_if, skip_status)
+        finally:
+            # drop this probe's inputs before reclaiming, or the cached blocks
+            # stay pinned and the next probe starts from the same high-water mark
+            del inputs
+            release()
+
+    def _check(name, inputs, ref_m, ker_m, target, skip_if=None, skip_status="skipped"):
         try:
             matches, detail = agree(inputs, ref_m, ker_m)
         except _ReferenceProbeError as error:
@@ -56,13 +132,30 @@ def silent_battery(
             }
             return None
         except _KernelProbeError as error:
+            if _is_out_of_memory(error):
+                diagnostics[name] = {
+                    "status": "skipped_out_of_memory",
+                    **error_detail(error),
+                }
+                return None
+            if skip_if is not None and skip_if(error):
+                diagnostics[name] = {"status": skip_status, **error_detail(error)}
+                return None
             target.append(f"{name}_crash")
             diagnostics[name] = {"status": "kernel_error", **error_detail(error)}
             return False
         except Exception as error:
-            target.append(f"{name}_harness_error")
-            diagnostics[name] = {"status": "harness_error", **error_detail(error)}
-            return False
+            # A harness fault is not evidence about the kernel. Blaming it here
+            # silently inflates the silent-failure count, which is the study's
+            # headline number: on a 14.5 GiB T4 an OOM during the probes turned
+            # a working kernel into "silent, non_contig_harness_error".
+            status = (
+                "skipped_out_of_memory"
+                if _is_out_of_memory(error)
+                else "skipped_harness_error"
+            )
+            diagnostics[name] = {"status": status, **error_detail(error)}
+            return None
         if not matches:
             target.append(name)
             diagnostics[name] = {"status": "mismatch", "detail": detail}
@@ -100,11 +193,22 @@ def silent_battery(
                 "detail": detail,
             }
     except Exception as error:
-        core.append("nondeterministic_crash")
-        diagnostics["nondeterministic"] = {
-            "status": "kernel_error",
-            **error_detail(error),
-        }
+        if _is_out_of_memory(error):
+            diagnostics["nondeterministic"] = {
+                "status": "skipped_out_of_memory",
+                **error_detail(error),
+            }
+        else:
+            core.append("nondeterministic_crash")
+            diagnostics["nondeterministic"] = {
+                "status": "kernel_error",
+                **error_detail(error),
+            }
+    finally:
+        # this probe keeps two full outputs alive at once, so it is the single
+        # largest resident block in the battery; release it before continuing
+        first = second = deterministic_inputs = None
+        release()
 
     def floating_only(tensor):
         return tensor.is_floating_point()
@@ -148,6 +252,8 @@ def silent_battery(
             }
 
     # FP16 is a robustness signal, not part of the FP32 silent-failure label.
+    # A kernel that *refuses* half input is recorded as unsupported, not failed;
+    # see _is_dtype_unsupported.
     saved_state = {
         name: value.detach().clone()
         for name, value in kernel_model.state_dict().items()
@@ -175,13 +281,22 @@ def silent_battery(
                 ref_m=ref_half,
                 ker_m=kernel_half,
                 target=robust,
+                skip_if=_is_dtype_unsupported,
+                skip_status="skipped_dtype_unsupported",
             )
         except Exception as error:
-            robust.append("fp16_crash")
-            diagnostics["fp16"] = {
-                "status": "kernel_error",
-                **error_detail(error),
-            }
+            if _is_dtype_unsupported(error):
+                # .half() or the input cast itself refused; same non-fault case
+                diagnostics["fp16"] = {
+                    "status": "skipped_dtype_unsupported",
+                    **error_detail(error),
+                }
+            else:
+                robust.append("fp16_crash")
+                diagnostics["fp16"] = {
+                    "status": "kernel_error",
+                    **error_detail(error),
+                }
         finally:
             try:
                 kernel_model.float()

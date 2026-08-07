@@ -1,0 +1,15 @@
+# Level 2 batch 10 of 10 -- 10 problems, stratified across the level
+# problems: 10,20,30,40,50,60,70,80,90,100
+#
+#   p10  10_ConvTranspose2d_MaxPool_Hardtanh_Mean_Tanh
+#   p20  20_ConvTranspose3d_Sum_ResidualAdd_Multiply_ResidualAdd
+#   p30  30_Gemm_GroupNorm_Hardtanh
+#   p40  40_Matmul_Scaling_ResidualAdd
+#   p50  50_ConvTranspose3d_Scaling_AvgPool_BiasAdd_Scaling
+#   p60  60_ConvTranspose3d_Swish_GroupNorm_HardSwish
+#   p70  70_Gemm_Sigmoid_Scaling_ResidualAdd
+#   p80  80_Gemm_Max_Subtract_GELU
+#   p90  90_Conv3d_LeakyReLU_Sum_Clamp_GELU
+#   p100 100_ConvTranspose3d_Clamp_Min_Divide
+
+10,20,30,40,50,60,70,80,90,100

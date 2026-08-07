@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+backups/
+
+# personal presentation artefacts, not part of the codebase
+supervisor-powerpoint/
+supervisor-powerpoint.zip

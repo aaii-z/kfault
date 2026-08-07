@@ -2,20 +2,22 @@
 
 Categories (first matching stage wins):
   syntactic  - code fails to build
-  runtime    - crashes or trips compute-sanitizer on standard input
+  runtime    - crashes, trips compute-sanitizer, or is too slow to evaluate
+               on standard input
   functional - runs, but wrong output on the standard input
   silent     - passes the standard check, wrong under the stress battery
   pass       - correct on standard input and survives the battery
 
 Pure classification: no API calls, no persistence. Weight sync mirrors
-KernelBench: torch.manual_seed(seed) before get_init_inputs(), before
-constructing each model, and before every input draw. Without this,
-problems with learnable params give the two models different weights.
+KernelBench, seeding before get_init_inputs(), before constructing each model,
+and before every input draw. Without it, problems with learnable parameters
+give the two models different weights.
 """
 
 from kfault.battery import silent_battery
 from kfault.benchmark import benchmark
 from kfault.comparison import clone_tree, compare_outputs, map_tensors
+from kfault.config import FORWARD_TIME_LIMIT_S
 from kfault.sanitizer import run_sanitizer
 
 
@@ -25,8 +27,13 @@ def classify(
     *,
     use_sanitizer: bool = True,
     seed: int = 42,
+    forward_time_limit: float | None = FORWARD_TIME_LIMIT_S,
 ):
-    """Run Stages 1-4 and return (category, detail, extra)."""
+    """Run Stages 1-4 and return (category, detail, extra).
+
+    ``forward_time_limit`` is the per-forward wall-clock budget in seconds;
+    pass ``None`` to disable the check.
+    """
     import torch
 
     extra: dict = {}
@@ -98,6 +105,32 @@ def classify(
     except Exception as error:
         return failure("runtime", "standard_forward", error)
 
+    # Stage 2a': RUNTIME. Is a single forward call affordable?
+    # Everything after this calls the kernel ~90 more times, so a kernel needing
+    # tens of seconds per call cannot finish and produces no row at all. The
+    # first call pays lazy module load and CUDA setup, so time a warm one.
+    if forward_time_limit is not None:
+        try:
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            with torch.no_grad():
+                start.record()
+                kernel_model(*clone_tree(std_inputs))
+                end.record()
+            end.synchronize()
+            forward_seconds = start.elapsed_time(end) / 1000.0
+        except Exception as error:
+            return failure("runtime", "standard_forward", error)
+        extra["forward_seconds"] = round(forward_seconds, 4)
+        if forward_seconds > forward_time_limit:
+            return failure(
+                "runtime",
+                "forward_time_limit",
+                f"one warm forward took {forward_seconds:.1f}s, over the "
+                f"{forward_time_limit:.1f}s budget; the battery and benchmark "
+                f"would need ~90 such calls",
+            )
+
     # Stage 2b: RUNTIME. Memory errors under compute-sanitizer?
     if use_sanitizer:
         sanitizer = run_sanitizer(problem_code, generated_code, seed)
@@ -135,15 +168,21 @@ def classify(
             }
 
     # Stage 4: SILENT. Wrong under the stress battery?
-    core, robust, battery_diagnostics = silent_battery(
-        ref_model,
-        kernel_model,
-        fresh_inputs,
-        init_inputs,
-        Model,
-        seed,
-        custom_stress_inputs=custom_stress_inputs,
-    )
+    # A battery crash is a harness failure, not evidence about the kernel, so it
+    # must not be labelled silent. It also must not escape: a torch exception
+    # cannot be deserialized by a caller without torch, hiding the real cause.
+    try:
+        core, robust, battery_diagnostics = silent_battery(
+            ref_model,
+            kernel_model,
+            fresh_inputs,
+            init_inputs,
+            Model,
+            seed,
+            custom_stress_inputs=custom_stress_inputs,
+        )
+    except Exception as error:
+        return failure("error", "stress_battery_harness", error)
     extra["robustness_flags"] = robust
     extra["battery_diagnostics"] = battery_diagnostics
 

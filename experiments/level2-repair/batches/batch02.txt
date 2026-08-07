@@ -1,0 +1,15 @@
+# Level 2 batch 02 of 10 -- 10 problems, stratified across the level
+# problems: 2,12,22,32,42,52,62,72,82,92
+#
+#   p2   2_ConvTranspose2d_BiasAdd_Clamp_Scaling_Clamp_Divide
+#   p12  12_Gemm_Multiply_LeakyReLU
+#   p22  22_Matmul_Scale_ResidualAdd_Clamp_LogSumExp_Mish
+#   p32  32_Conv2d_Scaling_Min
+#   p42  42_ConvTranspose2d_GlobalAvgPool_BiasAdd_LogSumExp_Sum_Multiply
+#   p52  52_Conv2d_Activation_BatchNorm
+#   p62  62_Matmul_GroupNorm_LeakyReLU_Sum
+#   p72  72_ConvTranspose3d_BatchNorm_AvgPool_AvgPool
+#   p82  82_Conv2d_Tanh_Scaling_BiasAdd_Max
+#   p92  92_Conv2d_GroupNorm_Tanh_HardSwish_ResidualAdd_LogSumExp
+
+2,12,22,32,42,52,62,72,82,92

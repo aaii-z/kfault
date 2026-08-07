@@ -1,0 +1,15 @@
+# Level 2 batch 08 of 10 -- 10 problems, stratified across the level
+# problems: 8,18,28,38,48,58,68,78,88,98
+#
+#   p8   8_Conv3d_Divide_Max_GlobalAvgPool_BiasAdd_Sum
+#   p18  18_Matmul_Sum_Max_AvgPool_LogSumExp_LogSumExp
+#   p28  28_BMM_InstanceNorm_Sum_ResidualAdd_Multiply
+#   p38  38_ConvTranspose3d_AvgPool_Clamp_Softmax_Multiply
+#   p48  48_Conv3d_Scaling_Tanh_Multiply_Sigmoid
+#   p58  58_ConvTranspose3d_LogSumExp_HardSwish_Subtract_Clamp
+#   p68  68_Matmul_Min_Subtract
+#   p78  78_ConvTranspose3d_Max_Max_Sum
+#   p88  88_Gemm_GroupNorm_Swish_Multiply_Swish
+#   p98  98_Matmul_AvgPool_GELU_Scale_Max
+
+8,18,28,38,48,58,68,78,88,98

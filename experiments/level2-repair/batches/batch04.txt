@@ -1,0 +1,15 @@
+# Level 2 batch 04 of 10 -- 10 problems, stratified across the level
+# problems: 4,14,24,34,44,54,64,74,84,94
+#
+#   p4   4_Conv2d_Mish_Mish
+#   p14  14_Gemm_Divide_Sum_Scaling
+#   p24  24_Conv3d_Min_Softmax
+#   p34  34_ConvTranspose3d_LayerNorm_GELU_Scaling
+#   p44  44_ConvTranspose2d_Multiply_GlobalAvgPool_GlobalAvgPool_Mean
+#   p54  54_Conv2d_Multiply_LeakyReLU_GELU
+#   p64  64_Gemm_LogSumExp_LeakyReLU_LeakyReLU_GELU_GELU
+#   p74  74_ConvTranspose3d_LeakyReLU_Multiply_LeakyReLU_Max
+#   p84  84_Gemm_BatchNorm_Scaling_Softmax
+#   p94  94_Gemm_BiasAdd_Hardtanh_Mish_GroupNorm
+
+4,14,24,34,44,54,64,74,84,94

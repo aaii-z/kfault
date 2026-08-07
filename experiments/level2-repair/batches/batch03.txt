@@ -1,0 +1,15 @@
+# Level 2 batch 03 of 10 -- 10 problems, stratified across the level
+# problems: 3,13,23,33,43,53,63,73,83,93
+#
+#   p3   3_ConvTranspose3d_Sum_LayerNorm_AvgPool_GELU
+#   p13  13_ConvTranspose3d_Mean_Add_Softmax_Tanh_Scaling
+#   p23  23_Conv3d_GroupNorm_Mean
+#   p33  33_Gemm_Scale_BatchNorm
+#   p43  43_Conv3d_Max_LogSumExp_ReLU
+#   p53  53_Gemm_Scaling_Hardtanh_GELU
+#   p63  63_Gemm_ReLU_Divide
+#   p73  73_Conv2d_BatchNorm_Scaling
+#   p83  83_Conv3d_GroupNorm_Min_Clamp_Dropout
+#   p93  93_ConvTranspose2d_Add_Min_GELU_Multiply
+
+3,13,23,33,43,53,63,73,83,93

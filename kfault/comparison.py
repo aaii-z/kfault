@@ -11,7 +11,22 @@ def clone_tree(value):
     import torch
 
     if isinstance(value, torch.Tensor):
-        return value.clone(memory_format=torch.preserve_format)
+        # clone(preserve_format) silently returns a CONTIGUOUS tensor for any
+        # view that is not "non-overlapping and dense". That destroyed the
+        # non_contig probe: the kernel never saw a strided input and a kernel
+        # assuming contiguity was labelled pass instead of silent. Reproduce
+        # the exact strides instead. Contiguous inputs take the cheap path,
+        # so peak memory is unchanged for every other probe.
+        if value.is_contiguous():
+            return value.clone(memory_format=torch.preserve_format)
+        clone = torch.empty_strided(
+            value.size(),
+            value.stride(),
+            dtype=value.dtype,
+            device=value.device,
+        )
+        clone.copy_(value)
+        return clone
     if isinstance(value, dict):
         return type(value)((key, clone_tree(item)) for key, item in value.items())
     if isinstance(value, list):
@@ -62,24 +77,29 @@ def compare_outputs(reference, candidate, *, atol=1e-3, rtol=1e-3, path="output"
                 f"{path}: shape mismatch {tuple(candidate.shape)} vs "
                 f"{tuple(reference.shape)}",
             )
+
+        # Compare in native precision whenever the dtypes already agree: no copy,
+        # no precision loss. Only a genuine dtype mismatch needs a common type,
+        # and that type is never float64. A float64 copy of a large conv output
+        # is ~2x the tensor and OOMs the GPU (or the host, if moved off-device)
+        # next to both resident models. This matches KernelBench, which compares
+        # in native precision; float32 vs float64 gives the same decision at a
+        # 1e-3 tolerance.
+        def compare_values(common_dtype):
+            if reference.dtype == candidate.dtype:
+                left, right = reference, candidate
+            else:
+                left, right = reference.to(common_dtype), candidate.to(common_dtype)
+            return torch.allclose(left, right, atol=atol, rtol=rtol)
+
         if reference.is_complex() or candidate.is_complex():
             if not reference.is_complex() or not candidate.is_complex():
                 return False, f"{path}: real/complex dtype mismatch"
-            values_match = torch.allclose(
-                reference.to(torch.complex128),
-                candidate.to(torch.complex128),
-                atol=atol,
-                rtol=rtol,
-            )
+            values_match = compare_values(torch.complex64)
         elif reference.is_floating_point() or candidate.is_floating_point():
             if not reference.is_floating_point() or not candidate.is_floating_point():
                 return False, f"{path}: integer/floating dtype mismatch"
-            values_match = torch.allclose(
-                reference.to(torch.float64),
-                candidate.to(torch.float64),
-                atol=atol,
-                rtol=rtol,
-            )
+            values_match = compare_values(torch.float32)
         else:
             values_match = torch.equal(reference, candidate)
         if not values_match:

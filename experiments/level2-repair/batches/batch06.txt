@@ -1,0 +1,15 @@
+# Level 2 batch 06 of 10 -- 10 problems, stratified across the level
+# problems: 6,16,26,36,46,56,66,76,86,96
+#
+#   p6   6_Conv3d_Softmax_MaxPool_MaxPool
+#   p16  16_ConvTranspose2d_Mish_Add_Hardtanh_Scaling
+#   p26  26_ConvTranspose3d_Add_HardSwish
+#   p36  36_ConvTranspose2d_Min_Sum_GELU_Add
+#   p46  46_Conv2d_Subtract_Tanh_Subtract_AvgPool
+#   p56  56_Matmul_Sigmoid_Sum
+#   p66  66_Matmul_Dropout_Softmax
+#   p76  76_Gemm_Add_ReLU
+#   p86  86_Matmul_Divide_GELU
+#   p96  96_ConvTranspose3d_Multiply_Max_GlobalAvgPool_Clamp
+
+6,16,26,36,46,56,66,76,86,96

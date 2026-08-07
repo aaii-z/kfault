@@ -1,58 +1,53 @@
 """Modal app: generate kernels, classify them, cache results.
 
-Pure logic lives in the kfault package (prompts, sanitizer, battery,
-classifier). This file only wires it to Modal, the LLM API and the cache.
+Pure logic lives in the kfault package (config, prompts, generation,
+sanitizer, battery, classifier, report). This file only wires it to Modal,
+the LLM API and the cache volume.
 """
 
-import os
-
 import modal
+from modal.exception import FunctionTimeoutError
 
-from kfault.cache import cache_key, content_hash, write_json_atomic
+from kfault import generation as gen
+from kfault.cache import content_hash, write_json_atomic
 from kfault.classifier import classify
+from kfault.config import (
+    ARMS,
+    CLASSIFIER_CACHE_VERSION,
+    CLASSIFIER_TIMEOUT_S,
+    CUDA_IMAGE,
+    DATASET_REVISION,
+    DEFAULT_FORWARD_TIME_LIMIT_S,
+    FORWARD_TIME_LIMIT_S,
+    GPU,
+    MODEL_ID,
+    PINNED_PACKAGES,
+    RESULTS_DIR,
+)
 from kfault.prompts import build_prompt, strip_fences, strip_reasoning
+from kfault.repair import build_feedback, build_repair_prompt, should_repair
+from kfault.report import format_summary
 
 app = modal.App("kfault-pipeline", include_source=False)
-
-# Provider: AWS Bedrock, OpenAI-compatible endpoint, DeepSeek V3.2 serverless.
-# Two arms, SAME model weights, only the reasoning switch differs. This is the
-# controlled contrast the study is built on.
-BEDROCK_URL = "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1"
-MODEL_ID = "deepseek.v3-v1:0"
-ARMS = {
-    "think": "high",  # reasoning ON
-    "direct": "none",  # reasoning OFF
-}
-
-# GPU for all containers. Override per run, e.g. for the RQ4 multi-GPU pass
-# or for L4/A100 where compute-sanitizer works:
-#   KFAULT_GPU=L4 uv run modal run pipeline.py ...
-GPU = os.environ.get("KFAULT_GPU", "T4")
-CUDA_IMAGE = (
-    "nvidia/cuda@sha256:456c919bec924d6add510e2ba23fd56f16d7d7d5a4d533"
-    "878cc395d2175eb4d0"
-)
-DATASET_REVISION = "ca1464e5d4723fd14f87b8e68306aaa1fe66b81b"
-GENERATION_CACHE_VERSION = 1
-CLASSIFIER_CACHE_VERSION = 3
-PINNED_PACKAGES = (
-    "torch==2.6.0",
-    "ninja==1.11.1.1",
-    "openai==2.41.1",
-    "datasets==5.0.0",
-    "modal==1.5.0",
-)
 
 image = (
     modal.Image.from_registry(CUDA_IMAGE, add_python="3.12")
     .pip_install(*PINNED_PACKAGES)
-    .add_local_python_source("kfault")
+    # Every KFAULT_* setting must be listed here. Modal does not forward local
+    # environment variables, and these are read inside containers, so anything
+    # omitted silently falls back to its default.
+    .env(
+        {
+            "KFAULT_GPU": GPU,
+            "KFAULT_MODEL": MODEL_ID,
+            "KFAULT_FORWARD_LIMIT_S": str(FORWARD_TIME_LIMIT_S),
+            "KFAULT_CLASSIFIER_TIMEOUT_S": str(CLASSIFIER_TIMEOUT_S),
+        }
+    )
+    .add_local_python_source("kfault", "pipeline")
 )
 
-# Generation and classification artifacts have independent configuration keys
-# so classification changes never trigger another paid model request.
 results_volume = modal.Volume.from_name("kfault-results", create_if_missing=True)
-RESULTS_DIR = "/results"
 
 
 @app.function(
@@ -60,7 +55,8 @@ RESULTS_DIR = "/results"
     gpu=GPU,
     cpu=(2.0, 8.0),
     memory=(4096, 16384),
-    timeout=900,
+    # See CLASSIFIER_TIMEOUT_S. Not part of the cache key.
+    timeout=CLASSIFIER_TIMEOUT_S,
     block_network=True,
     restrict_modal_access=True,
     single_use_containers=True,
@@ -78,180 +74,163 @@ def run_classifier(
     # and produce spurious functional failures
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    category, detail, extra = classify(
-        generated_code, problem_code, use_sanitizer=use_sanitizer, seed=seed
-    )
+    # Nothing torch-typed may cross the Modal boundary: the local caller has no
+    # torch, so a propagating torch exception is replaced by "Deserialization
+    # failed because the 'torch' module is not available" and the real cause is
+    # lost. Convert any unhandled failure into a plain-data error result.
+    try:
+        category, detail, extra = classify(
+            generated_code, problem_code, use_sanitizer=use_sanitizer, seed=seed
+        )
+    except BaseException as error:
+        category, detail = "error", str(error)[:1000]
+        extra = {
+            "failure": {
+                "stage": "classifier_uncaught",
+                "error_type": type(error).__name__,
+                "message": detail,
+            }
+        }
     device = torch.cuda.current_device()
     properties = torch.cuda.get_device_properties(device)
+    # Every value must be a PLAIN builtin. torch.__version__ is a TorchVersion
+    # (str subclass): json.dump writes it happily, but Modal pickles the class,
+    # and the local caller has no torch to unpickle it, so the whole result
+    # fails to deserialize with "the 'torch' module is not available".
     extra["runtime_environment"] = {
-        "torch": torch.__version__,
-        "torch_cuda": torch.version.cuda,
-        "gpu_name": properties.name,
+        "torch": str(torch.__version__),
+        "torch_cuda": str(torch.version.cuda),
+        "gpu_name": str(properties.name),
         "compute_capability": f"{properties.major}.{properties.minor}",
         "cuda_image": CUDA_IMAGE,
-        "pinned_packages": PINNED_PACKAGES,
+        "pinned_packages": list(PINNED_PACKAGES),
     }
     return category, detail, extra
 
 
-@app.function(
-    image=image,
-    secrets=[modal.Secret.from_name("bedrock")],
-    volumes={RESULTS_DIR: results_volume},
-    timeout=1800,
-)
-def diagnose(
-    problem_num: int = 1,
-    arm: str = "direct",
-    level: int = 1,
-    force: bool = False,
-    use_sanitizer: bool = True,
-    sample: int = 0,
-    temperature: float = 0.0,
-    regen: bool = False,
-    seed: int = 42,
-):
-    """CPU orchestrator: cache, generation, then GPU classification.
-
-    Runs on CPU so no GPU sits idle while the LLM thinks; the GPU container
-    (run_classifier) starts only when the kernel code is ready.
-    """
-    import json
-    import os
-    import time
-    from datetime import datetime, timezone
-    from glob import glob
-
+def _load_problem(level: int, problem_num: int):
     from datasets import load_dataset
-    from openai import OpenAI
 
-    reasoning_effort = ARMS[arm]
     ds = load_dataset(
         "ScalingIntelligence/KernelBench",
         split=f"level_{level}",
         revision=DATASET_REVISION,
     )
-    problem = next(p for p in ds if p["problem_id"] == problem_num)
-    code, name = problem["code"], problem["name"]
-    prompt = build_prompt(code)
+    return next(p for p in ds if p["problem_id"] == problem_num)
 
-    generation_config = {
-        "schema": GENERATION_CACHE_VERSION,
-        "model_id": MODEL_ID,
-        "reasoning_effort": reasoning_effort,
-        "level": level,
-        "problem_id": problem_num,
-        "sample": sample,
-        "temperature": temperature,
-        "dataset_revision": DATASET_REVISION,
-        "prompt_sha256": content_hash(prompt),
-        "openai_version": "2.41.1",
-    }
-    generation_key = cache_key(generation_config)
+
+def _import_legacy(path_parts, key, config, prompt):
+    """Find an old combined-cache entry matching this exact request."""
+    import json
+    from glob import glob
+
+    level, problem_num, arm, sample, temperature = path_parts
+    suffix = "" if sample == 0 else f"_s{sample}"
+    pattern = f"{RESULTS_DIR}/level{level}_p{problem_num}_{arm}{suffix}*.json"
+    for legacy_path in sorted(glob(pattern), reverse=True):
+        with open(legacy_path) as file:
+            legacy = json.load(file)
+        if gen.legacy_matches(
+            legacy, arm=arm, sample=sample, temperature=temperature, prompt=prompt
+        ):
+            return gen.from_legacy(legacy, legacy_path, key, config)
+    return None
+
+
+def _resolve_generation(
+    *,
+    prompt,
+    key,
+    config,
+    path,
+    path_parts,
+    reasoning_effort,
+    temperature,
+    regen,
+    allow_legacy=True,
+):
+    """Return ``(generation, reused)``, paying for a new response only if needed."""
+    import json
+    import os
+
+    cached = None
+    if os.path.exists(path):
+        with open(path) as file:
+            cached = json.load(file)
+
+    if cached is None and not regen and allow_legacy:
+        cached = _import_legacy(path_parts, key, config, prompt)
+        if cached is not None:
+            write_json_atomic(path, cached)
+            results_volume.commit()
+
+    if cached is not None and not regen:
+        return cached, True
+
+    generation = gen.request(
+        prompt,
+        api_key=os.environ["AWS_BEARER_TOKEN_BEDROCK"],
+        reasoning_effort=reasoning_effort,
+        temperature=temperature,
+        key=key,
+        config=config,
+    )
+    write_json_atomic(path, generation)
+    results_volume.commit()
+    return generation, False
+
+
+def _attempt(*, context, prompt, turn, feedback, force, regen, use_sanitizer, seed):
+    """Generate (or reuse) one attempt and classify it."""
+    import json
+    import os
+    import time
+    from datetime import datetime, timezone
+
+    from kfault.cache import cache_key
+
+    level = context["level"]
+    problem_num = context["problem_id"]
+    arm = context["arm"]
+    reasoning_effort = context["reasoning_effort"]
+    sample = context["sample"]
+    temperature = context["temperature"]
+    code = context["problem_code"]
+    name = context["problem_name"]
+
+    generation_config = gen.generation_config(
+        reasoning_effort=reasoning_effort,
+        level=level,
+        problem_id=problem_num,
+        sample=sample,
+        temperature=temperature,
+        dataset_revision=DATASET_REVISION,
+        prompt=prompt,
+        turn=turn,
+        feedback=feedback,
+    )
+    generation_key = gen.generation_key(generation_config)
     generation_path = f"{RESULTS_DIR}/generations/{generation_key}.json"
-
-    results_volume.reload()
-    os.makedirs(f"{RESULTS_DIR}/generations", exist_ok=True)
-    os.makedirs(f"{RESULTS_DIR}/classifications", exist_ok=True)
 
     # force alone re-classifies the cached response (no API spend);
     # regen forces a genuinely new generation
-    cached_generation = None
-    if os.path.exists(generation_path):
-        with open(generation_path) as file:
-            cached_generation = json.load(file)
-
-    # Import an old combined-cache response only when all generation fields and
-    # the full prompt match. This preserves already-paid generations without
-    # carrying forward stale classifications or ambiguous configurations.
-    if cached_generation is None and not regen:
-        suffix = "" if sample == 0 else f"_s{sample}"
-        legacy_pattern = (
-            f"{RESULTS_DIR}/level{level}_p{problem_num}_{arm}{suffix}*.json"
-        )
-        for legacy_path in sorted(glob(legacy_pattern), reverse=True):
-            with open(legacy_path) as file:
-                legacy = json.load(file)
-            matches = (
-                legacy.get("model_id") == MODEL_ID
-                and legacy.get("arm") == arm
-                and legacy.get("sample", 0) == sample
-                and legacy.get("temperature", 0.0) == temperature
-                and legacy.get("prompt") == prompt
-                and legacy.get("raw_response") is not None
-            )
-            if not matches:
-                continue
-            generated_at = legacy.get("generated_at") or legacy.get("labelled_at")
-            cached_generation = {
-                "generation_key": generation_key,
-                "generation_config": generation_config,
-                "prompt": prompt,
-                "raw_response": legacy["raw_response"],
-                "finish_reason": legacy.get("finish_reason"),
-                "usage": legacy.get("usage"),
-                "gen_seconds": legacy.get("gen_seconds"),
-                "generated_at": generated_at,
-                "migrated_from": legacy_path,
-            }
-            cached_generation["generation_artifact_key"] = content_hash(
-                json.dumps(
-                    {
-                        "raw_response": cached_generation["raw_response"],
-                        "generated_at": generated_at,
-                    },
-                    sort_keys=True,
-                )
-            )
-            write_json_atomic(generation_path, cached_generation)
-            results_volume.commit()
-            break
-    reused = cached_generation is not None and not regen
-    if reused:
-        generation = cached_generation
-    else:
-        client = OpenAI(
-            api_key=os.environ["AWS_BEARER_TOKEN_BEDROCK"],
-            base_url=BEDROCK_URL,
-        )
-        t0 = time.monotonic()
-        response = client.chat.completions.create(
-            model=MODEL_ID,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            # generous cap: the think arm spends tokens before the code
-            max_tokens=16000,
-            extra_body={"reasoning_effort": reasoning_effort},
-        )
-        gen_seconds = round(time.monotonic() - t0, 2)
-        generated_at = datetime.now(timezone.utc).isoformat()
-        generation = {
-            "generation_key": generation_key,
-            "generation_config": generation_config,
-            "prompt": prompt,
-            "raw_response": response.choices[0].message.content,
-            "finish_reason": response.choices[0].finish_reason,
-            "usage": response.usage.model_dump() if response.usage else None,
-            "gen_seconds": gen_seconds,
-            "generated_at": generated_at,
-        }
-        generation["generation_artifact_key"] = content_hash(
-            json.dumps(
-                {
-                    "raw_response": generation["raw_response"],
-                    "generated_at": generated_at,
-                },
-                sort_keys=True,
-            )
-        )
-        write_json_atomic(generation_path, generation)
-        results_volume.commit()
+    generation, reused = _resolve_generation(
+        prompt=prompt,
+        key=generation_key,
+        config=generation_config,
+        path=generation_path,
+        path_parts=(level, problem_num, arm, sample, temperature),
+        reasoning_effort=reasoning_effort,
+        temperature=temperature,
+        regen=regen,
+        allow_legacy=turn == 0,
+    )
 
     raw_response = generation.get("raw_response")
     finish_reason = generation.get("finish_reason")
-    generation_artifact_key = generation.get("generation_artifact_key")
-    if generation_artifact_key is None:
-        generation_artifact_key = content_hash(raw_response or "")
+    generation_artifact_key = generation.get("generation_artifact_key") or content_hash(
+        raw_response or ""
+    )
 
     classification_config = {
         "schema": CLASSIFIER_CACHE_VERSION,
@@ -262,6 +241,11 @@ def diagnose(
         "cuda_image": CUDA_IMAGE,
         "packages": PINNED_PACKAGES,
     }
+    # The budget decides runtime/forward_time_limit versus a full battery run,
+    # so two budgets must not share an entry. Added only when non-default, so
+    # the default keeps its existing hash and cached entries stay valid.
+    if FORWARD_TIME_LIMIT_S != DEFAULT_FORWARD_TIME_LIMIT_S:
+        classification_config["forward_time_limit"] = FORWARD_TIME_LIMIT_S
     classification_key = cache_key(classification_config)
     classification_path = f"{RESULTS_DIR}/classifications/{classification_key}.json"
     if os.path.exists(classification_path) and not force and not regen:
@@ -281,9 +265,26 @@ def diagnose(
         t0 = time.monotonic()
         # spawn + get: detached call, survives client disconnects (Modal
         # warns that plain .remote() may be canceled mid-run)
-        category, detail, extra = run_classifier.spawn(
-            generated_code, code, use_sanitizer, seed
-        ).get()
+        try:
+            category, detail, extra = run_classifier.spawn(
+                generated_code, code, use_sanitizer, seed
+            ).get()
+        except FunctionTimeoutError as error:
+            # The kernel hung inside a call we cannot interrupt. Recorded as a
+            # real result rather than allowed to escape: an escaping exception
+            # leaves no row, skips the cache write, and kills the repair chain.
+            category = "runtime"
+            detail = (
+                f"classification exceeded the {CLASSIFIER_TIMEOUT_S}s container "
+                f"limit; the kernel is hung or pathologically slow"
+            )
+            extra = {
+                "failure": {
+                    "stage": "container_timeout",
+                    "error_type": type(error).__name__,
+                    "message": str(error)[:1000],
+                }
+            }
         # includes GPU container start-up, not pure classification time
         classify_seconds = round(time.monotonic() - t0, 2)
 
@@ -318,9 +319,103 @@ def diagnose(
         "cached": False,
         **extra,
     }
+    # Only present on repair runs, so one-shot artifacts stay byte-identical.
+    if turn:
+        result["turn"] = turn
+        result["repair_feedback"] = feedback
 
     write_json_atomic(classification_path, result)
     results_volume.commit()
+    return result
+
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("bedrock")],
+    volumes={RESULTS_DIR: results_volume},
+    # generous: a repair run pays generation + classification once per turn
+    timeout=7200,
+)
+def diagnose(
+    problem_num: int = 1,
+    arm: str = "direct",
+    level: int = 1,
+    force: bool = False,
+    use_sanitizer: bool = True,
+    sample: int = 0,
+    temperature: float = 0.0,
+    regen: bool = False,
+    seed: int = 42,
+    repair_turns: int = 0,
+):
+    """CPU orchestrator: cache, generation, then GPU classification.
+
+    Runs on CPU so no GPU sits idle while the LLM thinks; the GPU container
+    (run_classifier) starts only when the kernel code is ready.
+
+    repair_turns=0 is the one-shot KernelBench protocol. Above 0, a failed
+    attempt is fed back to the model (visible stages only) and retried.
+    """
+    import os
+
+    results_volume.reload()
+    os.makedirs(f"{RESULTS_DIR}/generations", exist_ok=True)
+    os.makedirs(f"{RESULTS_DIR}/classifications", exist_ok=True)
+
+    problem = _load_problem(level, problem_num)
+    context = {
+        "level": level,
+        "problem_id": problem_num,
+        "problem_name": problem["name"],
+        "problem_code": problem["code"],
+        "arm": arm,
+        "reasoning_effort": ARMS[arm],
+        "sample": sample,
+        "temperature": temperature,
+    }
+
+    prompt = build_prompt(problem["code"])
+    feedback = ""
+    history = []
+    result = None
+
+    for turn in range(repair_turns + 1):
+        if turn:
+            prompt = build_repair_prompt(
+                problem["code"], result.get("generated_code"), feedback
+            )
+        result = _attempt(
+            context=context,
+            prompt=prompt,
+            turn=turn,
+            feedback=feedback,
+            force=force,
+            regen=regen,
+            use_sanitizer=use_sanitizer,
+            seed=seed,
+        )
+        history.append(
+            {
+                "turn": turn,
+                "category": result["category"],
+                "detail": result.get("detail"),
+                "generation_key": result["generation_key"],
+                "classification_key": result["classification_key"],
+            }
+        )
+        if not should_repair(result["category"]):
+            break
+        feedback = build_feedback(result["category"], result.get("detail"), result)
+        if not feedback:
+            break
+
+    if repair_turns:
+        result = {
+            **result,
+            "repair_turns": repair_turns,
+            "turns_used": len(history) - 1,
+            "repair_history": history,
+        }
     return result
 
 
@@ -349,6 +444,7 @@ def main(
     regen: bool = False,
     use_sanitizer: bool = True,
     seed: int = 42,
+    repair_turns: int = 0,
 ):
     """Fan out problems x arms x samples across Modal containers.
 
@@ -356,6 +452,7 @@ def main(
     Sample 0 is greedy (temp 0); samples 1..n-1 use --temperature.
     --force re-classifies cached generations for free; add --regen for
     genuinely new generations.
+    --repair-turns N lets each attempt see its own error and retry N times.
     """
     import itertools
     from collections import Counter
@@ -366,7 +463,7 @@ def main(
     for num, arm, s in itertools.product(nums, ARMS, range(samples)):
         temp = 0.0 if s == 0 else temperature
         handles[(num, arm, s)] = diagnose.spawn(
-            num, arm, level, force, use_sanitizer, s, temp, regen, seed
+            num, arm, level, force, use_sanitizer, s, temp, regen, seed, repair_turns
         )
 
     rows = []
@@ -381,39 +478,4 @@ def main(
         per_arm[arm][r["category"]] += 1
 
     rows.sort(key=lambda x: (x[0], x[1], x[2]))
-    print(f"\n=== Level {level} | problems {nums} | {samples} sample(s) ===")
-    for num, arm, s, r in rows:
-        cache = " (cached)" if r.get("cached") else ""
-        sanitizer = r.get("sanitizer") or {}
-        sanitizer_status = sanitizer.get("status")
-        san_s = f" san={sanitizer_status}" if sanitizer_status else ""
-        detail = (r.get("detail") or "")[:60]
-        print(
-            f"L{level} p{num:<3} [{arm} s{s}] {r['category']:<10} "
-            f"{detail}{san_s}{cache}"
-        )
-
-    print("\n--- category distribution (by arm) ---")
-    canonical = ["syntactic", "runtime", "functional", "silent", "pass"]
-    seen = set().union(*[set(c) for c in per_arm.values()])
-    cats = canonical + sorted(seen - set(canonical))
-    header = "arm     " + "".join(f"{c:>11}" for c in cats)
-    print(header)
-    for arm in ARMS:
-        line = f"{arm:<7} " + "".join(f"{per_arm[arm].get(c, 0):>11}" for c in cats)
-        print(line)
-
-    # RQ2 headline: silent share of standard-passing kernels
-    print("\n--- false-pass rate (RQ2) ---")
-    for arm in ARMS:
-        silent = per_arm[arm].get("silent", 0)
-        passed = per_arm[arm].get("pass", 0)
-        denom = silent + passed
-        if denom:
-            pct = 100 * silent / denom
-            print(
-                f"{arm}: {silent}/{denom} = {pct:.0f}% of standard-passing "
-                "kernels are silent failures"
-            )
-        else:
-            print(f"{arm}: no standard-passing kernels")
+    print(format_summary(level, nums, samples, ARMS, rows, per_arm))

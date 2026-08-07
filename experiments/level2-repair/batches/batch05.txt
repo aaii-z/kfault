@@ -1,0 +1,15 @@
+# Level 2 batch 05 of 10 -- 10 problems, stratified across the level
+# problems: 5,15,25,35,45,55,65,75,85,95
+#
+#   p5   5_ConvTranspose2d_Subtract_Tanh
+#   p15  15_ConvTranspose3d_BatchNorm_Subtract
+#   p25  25_Conv2d_Min_Tanh_Tanh
+#   p35  35_Conv2d_Subtract_HardSwish_MaxPool_Mish
+#   p45  45_Gemm_Sigmoid_LogSumExp
+#   p55  55_Matmul_MaxPool_Sum_Scale
+#   p65  65_Conv2d_AvgPool_Sigmoid_Sum
+#   p75  75_Gemm_GroupNorm_Min_BiasAdd
+#   p85  85_Conv2d_GroupNorm_Scale_MaxPool_Clamp
+#   p95  95_Matmul_Add_Swish_Tanh_GELU_Hardtanh
+
+5,15,25,35,45,55,65,75,85,95

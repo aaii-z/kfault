@@ -9,7 +9,7 @@
     uv run modal run validate.py
 
 @test:
-    uv run python -m unittest discover -s tests -v
+    PYTHONPATH=. uv run python -m unittest discover -s tests
 
 @lint:
     uvx ruff==0.12.4 check .

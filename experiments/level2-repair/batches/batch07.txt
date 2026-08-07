@@ -1,0 +1,15 @@
+# Level 2 batch 07 of 10 -- 10 problems, stratified across the level
+# problems: 7,17,27,37,47,57,67,77,87,97
+#
+#   p7   7_Conv3d_ReLU_LeakyReLU_GELU_Sigmoid_BiasAdd
+#   p17  17_Conv2d_InstanceNorm_Divide
+#   p27  27_Conv3d_HardSwish_GroupNorm_Mean
+#   p37  37_Matmul_Swish_Sum_GroupNorm
+#   p47  47_Conv3d_Mish_Tanh
+#   p57  57_Conv2d_ReLU_HardSwish
+#   p67  67_Conv2d_GELU_GlobalAvgPool
+#   p77  77_ConvTranspose3d_Scale_BatchNorm_GlobalAvgPool
+#   p87  87_Conv2d_Subtract_Subtract_Mish
+#   p97  97_Matmul_BatchNorm_BiasAdd_Divide_Swish
+
+7,17,27,37,47,57,67,77,87,97

@@ -1,0 +1,15 @@
+# Level 2 batch 09 of 10 -- 10 problems, stratified across the level
+# problems: 9,19,29,39,49,59,69,79,89,99
+#
+#   p9   9_Matmul_Subtract_Multiply_ReLU
+#   p19  19_ConvTranspose2d_GELU_GroupNorm
+#   p29  29_Matmul_Mish_Mish
+#   p39  39_Gemm_Scale_BatchNorm
+#   p49  49_ConvTranspose3d_Softmax_Sigmoid
+#   p59  59_Matmul_Swish_Scaling
+#   p69  69_Conv2d_HardSwish_ReLU
+#   p79  79_Conv3d_Multiply_InstanceNorm_Clamp_Multiply_Max
+#   p89  89_ConvTranspose3d_MaxPool_Softmax_Subtract_Swish_Max
+#   p99  99_Matmul_GELU_Softmax
+
+9,19,29,39,49,59,69,79,89,99
