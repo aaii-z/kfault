@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.ticker import PercentFormatter  # noqa: E402
 
 from kfault.analysis import false_pass_rate  # noqa: E402
+from kfault.config import CLASSIFIER_CACHE_VERSION  # noqa: E402
 
 OUT = "docs/figures/paper"
 
@@ -38,13 +39,16 @@ INK, INK_2, INK_MUTED = "#0b0b0b", "#52514e", "#8b8a85"
 SURFACE, GRID = "#fcfcfb", "#e6e5e1"
 
 # one hue per model, assigned once and reused across every figure
-MODEL_COLOR = {"GLM-5": BLUE, "DeepSeek V3": ORANGE, "Qwen3-235B": AQUA}
+MODEL_COLOR = {"GLM-5": BLUE, "DeepSeek V3.2": ORANGE, "Qwen3-235B": AQUA}
+# Bedrock serves `deepseek.v3-v1:0` as DeepSeek V3.2, not V3: the id is an
+# alias AWS repoints to newer checkpoints, so the display name is pinned here
+# and the runs it describes are dated 2026-08-03 to 2026-08-07.
 SHORT = {
     "zai.glm-5": "GLM-5",
-    "deepseek.v3-v1:0": "DeepSeek V3",
+    "deepseek.v3-v1:0": "DeepSeek V3.2",
     "qwen.qwen3-235b-a22b-2507-v1:0": "Qwen3-235B",
 }
-MODEL_ORDER = ["GLM-5", "DeepSeek V3", "Qwen3-235B"]
+MODEL_ORDER = ["GLM-5", "DeepSeek V3.2", "Qwen3-235B"]
 CATEGORIES = ["syntactic", "runtime", "functional", "silent", "pass"]
 # Severity reads left to right: does not build (blue) -> crashes (violet) ->
 # wrong answer (red) -> secretly wrong (amber warning) -> correct (green).
@@ -89,9 +93,36 @@ def save(fig, name):
     print(f"  {OUT}/{name}.pdf / .png")
 
 
+def assert_clean(attempts):
+    """Refuse a stale export rather than plot it.
+
+    A record from a superseded classifier is not comparable with a current one:
+    schema 3 predates the clone_tree stride fix, so its non_contig probe tested
+    a contiguous tensor and could never report a silent failure. Mixing the two
+    quietly deflates every false-pass rate in these figures.
+    """
+    schemas = {row["schema"] for row in attempts}
+    if schemas - {str(CLASSIFIER_CACHE_VERSION)}:
+        raise SystemExit(
+            f"data/attempts.csv holds schema {sorted(schemas)}, expected only "
+            f"{CLASSIFIER_CACHE_VERSION}. Re-run export.py."
+        )
+    seen = Counter(
+        (r["model_id"], r["device"], r["problem_id"], r["arm"], r["sample"], r["turn"])
+        for r in attempts
+    )
+    repeated = [key for key, n in seen.items() if n > 1]
+    if repeated:
+        raise SystemExit(
+            f"data/attempts.csv holds {len(repeated)} duplicated kernel "
+            f"identities. Re-run export.py."
+        )
+
+
 def load():
     chains = list(csv.DictReader(open("data/chains.csv")))
     attempts = list(csv.DictReader(open("data/attempts.csv")))
+    assert_clean(attempts)
     for row in chains + attempts:
         row["model"] = SHORT.get(row["model_id"], row["model_id"])
     return chains, attempts

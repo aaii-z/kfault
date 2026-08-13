@@ -120,6 +120,10 @@ def request(
         "prompt": prompt,
         "raw_response": response.choices[0].message.content,
         "finish_reason": response.choices[0].finish_reason,
+        # MODEL_ID is a Bedrock alias that AWS repoints to newer checkpoints,
+        # so record what actually answered. Absent from the August 2026 runs,
+        # which is why `deepseek.v3-v1:0` had to be resolved from the console.
+        "resolved_model": getattr(response, "model", None),
         "usage": response.usage.model_dump() if response.usage else None,
         "gen_seconds": round(time.monotonic() - started, 2),
         "generated_at": generated_at,

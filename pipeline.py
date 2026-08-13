@@ -311,6 +311,7 @@ def _attempt(*, context, prompt, turn, feedback, force, regen, use_sanitizer, se
         "raw_response": raw_response,
         "generated_code": generated_code,
         "usage": generation.get("usage"),
+        "resolved_model": generation.get("resolved_model"),
         "gen_seconds": generation.get("gen_seconds"),
         "generated_at": generation.get("generated_at"),
         "classify_seconds": classify_seconds,

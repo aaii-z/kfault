@@ -18,7 +18,7 @@ import os
 import modal
 
 from kfault.analysis import gpu_label, outcome
-from kfault.config import RESULTS_DIR
+from kfault.config import CLASSIFIER_CACHE_VERSION, RESULTS_DIR
 from pipeline import image, results_volume
 
 app = modal.App("kfault-export")
@@ -67,6 +67,7 @@ COLUMNS = [
     "speedup",
     "forward_seconds",
     # provenance
+    "resolved_model",
     "prompt_tokens",
     "completion_tokens",
     "gen_seconds",
@@ -126,6 +127,8 @@ def collect(level: int, with_code: bool):
             "kernel_ms": timing.get("kernel_ms"),
             "speedup": timing.get("speedup"),
             "forward_seconds": record.get("forward_seconds"),
+            # Empty for the August 2026 runs: the field predates this column.
+            "resolved_model": record.get("resolved_model"),
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
             "gen_seconds": record.get("gen_seconds"),
@@ -153,14 +156,26 @@ def main(level: int = 2, with_code: bool = False):
     rows = collect.remote(level, with_code)
     os.makedirs(OUT, exist_ok=True)
 
-    # newest record per identity: re-runs leave older copies behind
+    # Records from a superseded classifier are not comparable with current ones:
+    # schema 3 predates the clone_tree stride fix, so its non_contig probe was
+    # testing a contiguous tensor and could not report a silent failure.
+    stale = [r for r in rows if r["schema"] != CLASSIFIER_CACHE_VERSION]
+    if stale:
+        print(
+            f"dropping {len(stale)} record(s) from a superseded classifier "
+            f"(schema != {CLASSIFIER_CACHE_VERSION})"
+        )
+    rows = [r for r in rows if r["schema"] == CLASSIFIER_CACHE_VERSION]
+
+    # Newest record per identity: re-runs leave older copies behind. The key is
+    # the kernel's identity only. Including schema or forward_time_limit here
+    # would make a re-classification a *different* record instead of a newer
+    # one, and both copies would survive into the dataset.
     best = {}
     for row in rows:
         key = (
             row["model_id"],
             row["device"],
-            row["forward_time_limit"],
-            row["schema"],
             row["problem_id"],
             row["arm"],
             row["sample"],

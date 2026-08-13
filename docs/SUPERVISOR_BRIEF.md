@@ -68,7 +68,7 @@ pinned CUDA 12.4 and torch 2.6.0 across every run.
 | pass rate /100, after repair | think | direct |
 |---|---|---|
 | GLM-5 | 75 | 47 |
-| DeepSeek V3 | 76 | 6 |
+| DeepSeek V3.2 | 76 | 6 |
 | Qwen3-235B | 83 | 8 |
 
 Two of three models essentially cannot write correct Level-2 CUDA without

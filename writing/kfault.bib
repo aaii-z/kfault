@@ -1,0 +1,357 @@
+% Bibliography for the kfault dissertation.
+% Style: apalike (see \bibliographystyle{apalike} in the template).
+% Every entry corresponds to a PDF in ../files/<folder>/ unless noted.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Kernel generation with LLMs
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@article{chen2025cudallm,
+  title   = {{CUDA-LLM}: {LLMs} Can Write Efficient {CUDA} Kernels},
+  author  = {Chen, Wentao and Zhu, Jiace and Fan, Qi and Ma, Yehan and Zou, An},
+  journal = {arXiv preprint arXiv:2506.09092},
+  year    = {2025}
+}
+
+@inproceedings{li2026cudal1,
+  title     = {{CUDA-L1}: Improving {CUDA} Optimization via Contrastive Reinforcement Learning},
+  author    = {Li, Xiaoya and Sun, Xiaofei and Wang, Albert and Li, Jiwei and Shum, Chris},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026},
+  note      = {arXiv preprint arXiv:2507.14111}
+}
+
+@article{du2026kernelsmith,
+  title   = {{Kernel-Smith}: A Unified Recipe for Evolutionary Kernel Optimization},
+  author  = {Du, He and Ge, Qiming and Hu, Jiakai and Yang, Aijun and Cai, Zheng and Huang, Zixian and Yuan, Sheng and Cheng, Qinxiu and Xie, Xinchen and Chen, Yicheng and Li, Yining and Wang, Hui and Zhou, Bowen and Li, Bowen and Guo, Qipeng and Chen, Kai},
+  journal = {arXiv preprint arXiv:2603.28342},
+  year    = {2026}
+}
+
+@article{cao2026ksearch,
+  title   = {{K-Search}: {LLM} Kernel Generation via Co-Evolving Intrinsic World Model},
+  author  = {Cao, Shiyi and Mao, Ziming and Gonzalez, Joseph E. and Stoica, Ion},
+  journal = {arXiv preprint arXiv:2602.19128},
+  year    = {2026}
+}
+
+@inproceedings{wei2025astra,
+  title     = {{Astra}: A Multi-Agent System for {GPU} Kernel Performance Optimization},
+  author    = {Wei, Anjiang and Sun, Tianran and Seenichamy, Yogesh and Song, Hang and Ouyang, Anne and Mirhoseini, Azalia and Wang, Ke and Aiken, Alex},
+  booktitle = {NeurIPS 2025 Fourth Workshop on Deep Learning for Code},
+  year      = {2025},
+  note      = {arXiv preprint arXiv:2509.07506}
+}
+
+@article{dai2026cudaagent,
+  title   = {{CUDA} Agent: Large-Scale Agentic {RL} for High-Performance {CUDA} Kernel Generation},
+  author  = {Dai, Weinan and Wu, Hanlin and Yu, Qiying and Gao, Huan-ang and Li, Jiahao and Jiang, Chengquan and Lou, Weiqiang and Song, Yufan and Yu, Hongli and Chen, Jiaze and Ma, Wei-Ying and Zhang, Ya-Qin and Liu, Jingjing and Wang, Mingxuan and Liu, Xin and Zhou, Hao},
+  journal = {arXiv preprint arXiv:2602.24286},
+  year    = {2026}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Benchmarks, evaluation and verification
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{ouyang2025kernelbench,
+  title     = {{KernelBench}: Can {LLMs} Write Efficient {GPU} Kernels?},
+  author    = {Ouyang, Anne and Guo, Simon and Arora, Simran and Zhang, Alex L. and Hu, William and R{\'e}, Christopher and Mirhoseini, Azalia},
+  booktitle = {Proceedings of the 42nd International Conference on Machine Learning (ICML)},
+  year      = {2025},
+  note      = {arXiv preprint arXiv:2502.10517}
+}
+
+@article{lange2025robustkbench,
+  title   = {Towards Robust Agentic {CUDA} Kernel Benchmarking, Verification, and Optimization},
+  author  = {Lange, Robert Tjarko and Sun, Qi and Prasad, Aaditya and Faldor, Maxence and Tang, Yujin and Ha, David},
+  journal = {arXiv preprint arXiv:2509.14279},
+  year    = {2025}
+}
+
+@article{li2026cudabeaver,
+  title   = {{CUDABeaver}: Benchmarking {LLM}-Based Automated {CUDA} Debugging},
+  author  = {Li, Shiyang and Chen, Haoyang and Fazzini, Mattia and Ding, Caiwen},
+  journal = {arXiv preprint arXiv:2605.08455},
+  year    = {2026}
+}
+
+@article{zhu2026cudabench,
+  title   = {{CUDABench}: Benchmarking {LLMs} for Text-to-{CUDA} Generation},
+  author  = {Zhu, Jiace and Chen, Wentao and Fan, Qi and Ren, Zhixing and Wu, Junying and Chai, Xing Zhe and Rungrueangwutthinon, Chotiwit and Ma, Yehan and Zou, An},
+  journal = {arXiv preprint arXiv:2603.02236},
+  year    = {2026}
+}
+
+@inproceedings{jain2025livecodebench,
+  title     = {{LiveCodeBench}: Holistic and Contamination Free Evaluation of Large Language Models for Code},
+  author    = {Jain, Naman and Han, King and Gu, Alex and Li, Wen-Ding and Yan, Fanjia and Zhang, Tianjun and Wang, Sida and Solar-Lezama, Armando and Sen, Koushik and Stoica, Ion},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2025},
+  note      = {arXiv preprint arXiv:2403.07974}
+}
+
+@article{chen2021codex,
+  title   = {Evaluating Large Language Models Trained on Code},
+  author  = {Chen, Mark and Tworek, Jerry and Jun, Heewoo and Yuan, Qiming and Pinto, Henrique Ponde de Oliveira and Kaplan, Jared and Edwards, Harri and Burda, Yuri and Joseph, Nicholas and Brockman, Greg and others},
+  journal = {arXiv preprint arXiv:2107.03374},
+  year    = {2021}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Weak oracles and test inadequacy
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{liu2023evalplus,
+  title     = {Is Your Code Generated by {ChatGPT} Really Correct? {R}igorous Evaluation of Large Language Models for Code Generation},
+  author    = {Liu, Jiawei and Xia, Chunqiu Steven and Wang, Yuyao and Zhang, Lingming},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {36},
+  year      = {2023},
+  note      = {arXiv preprint arXiv:2305.01210}
+}
+
+@article{ludwig2026kaizen,
+  title   = {{Kaizen}: Metamorphic Fuzzing and Differential Testing for {LLM}-Translated {HPC} Applications},
+  author  = {Ludwig, Oscar and Anklesaria, Ninad and Jin, Zheming and Pophale, Swaroop and Moshood, Kausar and DeVore, Christian J. and Gill, Brandon and Villareal, Cassius and Teranishi, Keita and Motwani, Manish},
+  journal = {arXiv preprint arXiv:2607.04058},
+  year    = {2026}
+}
+
+@article{segura2016metamorphic,
+  title   = {A Survey on Metamorphic Testing},
+  author  = {Segura, Sergio and Fraser, Gordon and Sanchez, Ana B. and Ruiz-Cort{\'e}s, Antonio},
+  journal = {IEEE Transactions on Software Engineering},
+  volume  = {42},
+  number  = {9},
+  pages   = {805--824},
+  year    = {2016},
+  publisher = {IEEE}
+}
+
+@article{dixit2021silent,
+  title   = {Silent Data Corruptions at Scale},
+  author  = {Dixit, Harish Dattatraya and Pendharkar, Sneha and Beadon, Matt and Mason, Chris and Chakravarthy, Tejasvi and Muthiah, Bharath and Sankar, Sriram},
+  journal = {arXiv preprint arXiv:2102.11245},
+  year    = {2021}
+}
+
+@inproceedings{hochschild2021cores,
+  title     = {Cores That Don't Count},
+  author    = {Hochschild, Peter H. and Turner, Paul and Mogul, Jeffrey C. and Govindaraju, Rama and Ranganathan, Parthasarathy and Culler, David E. and Vahdat, Amin},
+  booktitle = {Proceedings of the Workshop on Hot Topics in Operating Systems (HotOS)},
+  year      = {2021},
+  publisher = {ACM},
+  note      = {DOI 10.1145/3458336.3465297}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Repair and self-correction
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{chen2024selfdebug,
+  title     = {Teaching Large Language Models to Self-Debug},
+  author    = {Chen, Xinyun and Lin, Maxwell and Sch{\"a}rli, Nathanael and Zhou, Denny},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  note      = {arXiv preprint arXiv:2304.05128}
+}
+
+@inproceedings{madaan2023selfrefine,
+  title     = {{Self-Refine}: Iterative Refinement with Self-Feedback},
+  author    = {Madaan, Aman and Tandon, Niket and Gupta, Prakhar and Hallinan, Skyler and Gao, Luyu and Wiegreffe, Sarah and Alon, Uri and Dziri, Nouha and Prabhumoye, Shrimai and Yang, Yiming and others},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {36},
+  year      = {2023},
+  note      = {arXiv preprint arXiv:2303.17651}
+}
+
+@inproceedings{shinn2023reflexion,
+  title     = {{Reflexion}: Language Agents with Verbal Reinforcement Learning},
+  author    = {Shinn, Noah and Cassano, Federico and Berman, Edward and Gopinath, Ashwin and Narasimhan, Karthik and Yao, Shunyu},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {36},
+  year      = {2023},
+  note      = {arXiv preprint arXiv:2303.11366}
+}
+
+@inproceedings{olausson2024selfrepair,
+  title     = {Is Self-Repair a Silver Bullet for Code Generation?},
+  author    = {Olausson, Theo X. and Inala, Jeevana Priya and Wang, Chenglong and Gao, Jianfeng and Solar-Lezama, Armando},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  note      = {arXiv preprint arXiv:2306.09896}
+}
+
+@inproceedings{huang2024cannot,
+  title     = {Large Language Models Cannot Self-Correct Reasoning Yet},
+  author    = {Huang, Jie and Chen, Xinyun and Mishra, Swaroop and Zheng, Huaixiu Steven and Yu, Adams Wei and Song, Xinying and Zhou, Denny},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  note      = {arXiv preprint arXiv:2310.01798}
+}
+
+@article{brown2024monkeys,
+  title   = {Large Language Monkeys: Scaling Inference Compute with Repeated Sampling},
+  author  = {Brown, Bradley and Juravsky, Jordan and Ehrlich, Ryan and Clark, Ronald and Le, Quoc V. and R{\'e}, Christopher and Mirhoseini, Azalia},
+  journal = {arXiv preprint arXiv:2407.21787},
+  year    = {2024}
+}
+
+@inproceedings{wei2022cot,
+  title     = {Chain-of-Thought Prompting Elicits Reasoning in Large Language Models},
+  author    = {Wei, Jason and Wang, Xuezhi and Schuurmans, Dale and Bosma, Maarten and Ichter, Brian and Xia, Fei and Chi, Ed H. and Le, Quoc V. and Zhou, Denny},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {35},
+  pages     = {24824--24837},
+  year      = {2022}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Kernel programming models and systems
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{tillet2019triton,
+  title     = {Triton: An Intermediate Language and Compiler for Tiled Neural Network Computations},
+  author    = {Tillet, Philippe and Kung, H. T. and Cox, David},
+  booktitle = {Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages (MAPL)},
+  pages     = {10--19},
+  year      = {2019},
+  publisher = {ACM}
+}
+
+@article{wang2025tilelang,
+  title   = {{TileLang}: A Composable Tiled Programming Model for {AI} Systems},
+  author  = {Wang, Lei and Cheng, Yu and Shi, Yining and Tang, Zhengju and Mo, Zhiwen and Xie, Wenhao and Ma, Lingxiao and Xia, Yuqing and Xue, Jilong and Yang, Fan and Yang, Zhi},
+  journal = {arXiv preprint arXiv:2504.17577},
+  year    = {2025}
+}
+
+@inproceedings{dao2022flashattention,
+  title     = {{FlashAttention}: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
+  author    = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {35},
+  pages     = {16344--16359},
+  year      = {2022}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% LLMs for HPC and parallel code translation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{lv2025hpctranscompile,
+  title     = {{HPCTransCompile}: An {AI} Compiler Generated Dataset for High-Performance {CUDA} Transpilation and {LLM} Preliminary Exploration},
+  author    = {Lv, Jiaqi and He, Xufeng and Liu, Yanchen and Dai, Xu and Shen, Aocheng and Li, Yinghao and Hao, Jiachen and Ding, Jianrong and Hu, Yang and Yin, Shouyi},
+  booktitle = {31st International European Conference on Parallel and Distributed Computing (Euro-Par)},
+  year      = {2025},
+  note      = {arXiv preprint arXiv:2506.10401}
+}
+
+@inproceedings{bitan2025unipar,
+  title     = {{UniPar}: A Unified {LLM}-Based Framework for Parallel and Accelerated Code Translation in {HPC}},
+  author    = {Bitan, Tomer and Kadosh, Tal and Kaplan, Erel and Meiri, Shira and Chen, Le and Morales, Peter and Hasabnis, Niranjan and Oren, Gal},
+  booktitle = {IEEE High Performance Extreme Computing Conference (HPEC)},
+  year      = {2025},
+  note      = {arXiv preprint arXiv:2509.12136}
+}
+
+@inproceedings{ding2023hpcgpt,
+  title     = {{HPC-GPT}: Integrating Large Language Model for High-Performance Computing},
+  author    = {Ding, Xianzhong and Chen, Le and Emani, Murali and Liao, Chunhua and Lin, Pei-Hung and Vanderbruggen, Tristan and Xie, Zhen and Cerpa, Alberto and Du, Wan},
+  booktitle = {Proceedings of the SC '23 Workshops of the International Conference on High Performance Computing, Network, Storage, and Analysis},
+  pages     = {951--960},
+  year      = {2023},
+  publisher = {ACM}
+}
+
+@article{nichols2026performance,
+  title   = {Performance-Aligned {LLMs} for Generating Fast {HPC} Code},
+  author  = {Nichols, Daniel and Polasam, Pranav and Menon, Harshitha and Marathe, Aniruddha and Gamblin, Todd and Bhatele, Abhinav},
+  journal = {IEEE Transactions on Parallel and Distributed Systems},
+  year    = {2026},
+  publisher = {IEEE}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Foundation code LLMs
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@article{roziere2023codellama,
+  title   = {Code {Llama}: Open Foundation Models for Code},
+  author  = {Rozi{\`e}re, Baptiste and Gehring, Jonas and Gloeckle, Fabian and Sootla, Sten and Gat, Itai and Tan, Xiaoqing Ellen and Adi, Yossi and Liu, Jingyu and Sauvestre, Romain and Remez, Tal and others},
+  journal = {arXiv preprint arXiv:2308.12950},
+  year    = {2023}
+}
+
+@article{guo2024deepseekcoder,
+  title   = {{DeepSeek-Coder}: When the Large Language Model Meets Programming -- The Rise of Code Intelligence},
+  author  = {Guo, Daya and Zhu, Qihao and Yang, Dejian and Xie, Zhenda and Dong, Kai and Zhang, Wentao and Chen, Guanting and Bi, Xiao and Wu, Y. and Li, Y. K. and others},
+  journal = {arXiv preprint arXiv:2401.14196},
+  year    = {2024}
+}
+
+@article{li2023starcoder,
+  title   = {{StarCoder}: May the Source Be With You!},
+  author  = {Li, Raymond and Allal, Loubna Ben and Zi, Yangtian and Muennighoff, Niklas and Kocetkov, Denis and Mou, Chenghao and Marone, Marc and Akiki, Christopher and Li, Jia and Chim, Jenny and others},
+  journal = {Transactions on Machine Learning Research},
+  year    = {2023}
+}
+
+@article{li2022alphacode,
+  title   = {Competition-Level Code Generation with {AlphaCode}},
+  author  = {Li, Yujia and Choi, David and Chung, Junyoung and Kushman, Nate and Schrittwieser, Julian and Leblond, R{\'e}mi and Eccles, Tom and Keeling, James and Gimeno, Felix and Dal Lago, Agustin and others},
+  journal = {Science},
+  volume  = {378},
+  number  = {6624},
+  pages   = {1092--1097},
+  year    = {2022},
+  publisher = {American Association for the Advancement of Science}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Models evaluated in this study (cite in Design/Implementation)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@article{qwen2025qwen3,
+  title   = {{Qwen3} Technical Report},
+  author  = {{Qwen Team}},
+  journal = {arXiv preprint arXiv:2505.09388},
+  year    = {2025}
+}
+
+@article{glm2026glm5,
+  title   = {{GLM-5}: From Vibe Coding to Agentic Engineering},
+  author  = {{GLM-5 Team}},
+  journal = {arXiv preprint arXiv:2602.15763},
+  year    = {2026}
+}
+
+@misc{deepseek2026v32,
+  title        = {{DeepSeek} {V3.2}},
+  author       = {{DeepSeek-AI}},
+  year         = {2026},
+  howpublished = {Amazon Bedrock model \texttt{deepseek.v3-v1:0}, us-west-2},
+  note         = {Accessed 9 August 2026}
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Tooling and datasets
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+@inproceedings{paszke2019pytorch,
+  title     = {{PyTorch}: An Imperative Style, High-Performance Deep Learning Library},
+  author    = {Paszke, Adam and Gross, Sam and Massa, Francisco and Lerer, Adam and Bradbury, James and Chanan, Gregory and Killeen, Trevor and Lin, Zeming and Gimelshein, Natalia and Antiga, Luca and others},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {32},
+  year      = {2019}
+}
+
+@book{kirk2012programming,
+  title     = {Programming Massively Parallel Processors: A Hands-on Approach},
+  author    = {Kirk, David B. and Hwu, Wen-mei W.},
+  edition   = {2},
+  year      = {2012},
+  publisher = {Morgan Kaufmann Publishers Inc.},
+  address   = {San Francisco, CA, USA}
+}
