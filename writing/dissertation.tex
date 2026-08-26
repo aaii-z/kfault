@@ -31,11 +31,25 @@
 \usepackage{booktabs}        % rules for the result tables
 \usepackage{algorithm}       % numbered algorithm floats
 \usepackage{algpseudocode}   % pseudocode body
+\usepackage{float}           % [H] keeps Algorithm 1 where it is written
 \usepackage{subcaption}      % multi-panel figures
 \usepackage{url}             % apalike emits \url
+\usepackage{listings}        % verbatim kernel sources in the appendix
+\lstset{basicstyle=\ttfamily\scriptsize\setstretch{1.0}, breaklines=true,
+        columns=fullflexible, showstringspaces=false, frame=none,
+        aboveskip=5pt, belowskip=5pt, xleftmargin=4pt, lineskip=-1pt}
 \usepackage{tikz}            % Figures 2 and 3 are drawn, not imported
 \usetikzlibrary{positioning, arrows.meta, fit, backgrounds}
 \usepackage[T1]{fontenc}
+\usepackage{placeins}        % \FloatBarrier keeps a figure in its own section
+% Loaded last: makes the contents, cross-references and citations clickable.
+% hidelinks keeps them black, so the printed page is unchanged.
+\usepackage[hidelinks]{hyperref}
+% Typographic guards: no word hyphenated across a page break, no widow or
+% orphan lines. These affect pagination only, not font, margins or spacing.
+\brokenpenalty=10000
+\widowpenalty=10000
+\clubpenalty=10000
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{document}
@@ -58,8 +72,23 @@ School of Computing Sciences, University of East Anglia, 2025/26
 \vspace{5cm}
 \noindent {{\huge \bf Abstract}}\\
 %%%%%%%%%%%%
-% TODO: no more than 200 words. Draft in docs/writing-style.md.
-Insert your abstract here. No more than 200 words.
+This project separates CUDA kernels that are genuinely correct from those that
+only pass the benchmark. KernelBench scores a generated kernel against a
+reference PyTorch module on five random, contiguous inputs. That test is kept, at a tighter tolerance, and
+stress tests are added that change the memory layout of the inputs, their size
+and type, and repeat the call. Kernels that pass the benchmark but fail
+under stress are counted as silent failures. The stress tests are hidden from
+the repair loop, so the model cannot learn to satisfy them. Applied to 100 problems across
+three models, with reasoning on and off on the same weights, and on two GPUs,
+this yields 2,852 kernel attempts. Repair raises the
+share the benchmark accepts in every condition, by up to 43 points, and the
+share of those that are silently wrong with it.
+Of the 244 kernels repair turns into a benchmark success, 79 are silent
+failures, twice as often as among kernels accepted first time, 25.7\% against
+12.4\%. After repair, KernelBench detects no
+significant difference between the three models, while the stress tests still
+separate them. A repaired kernel is not reliably more correct; it is reliably
+harder to catch.
 %%%%%%%%%%%%%
 
 \newpage
@@ -67,10 +96,23 @@ Insert your abstract here. No more than 200 words.
 
 \noindent {{\huge \bf Acknowledgement }}\\
 %%%%%%%%%%%%%%%%%%%%%
-% TODO: no more than 200 words.
-Insert your acknowledgement here. No more than 200 words.
+I would like to thank my supervisor, Prof. Stephen Laycock, for encouraging me
+throughout this project and for the guidance that helped me see it through.
+
+I am also grateful to Dr Jeannette Chin for her help and guidance along the
+way.
+
+Finally, I thank my family for their constant support and encouragement, which
+carried me through a demanding year.
 %%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\vspace{5cm}
+
+\noindent {{\huge \bf Statement of AI Usage }}\\
+Claude was used only as a research-support tool to help me understand background information and explore literature on similar or related topics.
+%%%%%%%%%%%%%%%%%%%%%
 
 %%%%%%%%%%%%%%%%%% insert a table of contents starting on a new page
 \newpage
@@ -84,44 +126,44 @@ Insert your acknowledgement here. No more than 200 words.
 % 1. INTRODUCTION -- 3 pages
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Introduction}
-% TODO 3 pages. Rubric: broad background; motivation and application;
-% explicit statement of aim and objectives.
-% Hook: AI systems now generate part of their own infrastructure.
-% Reuse the phrase "correct, or merely harder to catch".
 
 \subsection{Motivation}
 
-Machine learning now depends on a small amount of code that almost nobody
-writes. A GPU kernel is the layer where a mathematical operation becomes
-instructions on hardware, and the performance of every model trained or served
-today rests on a library of them. Writing one well takes expert knowledge of
-memory hierarchies and thread scheduling, and the work is slow. FlashAttention,
-one of the most consequential kernels of the last decade, arrived five years
-after the architecture it accelerates \citep{dao2022flashattention,
-ouyang2025kernelbench}.
+Machine learning depends on a small amount of code that almost nobody writes. A
+GPU kernel is the layer where a mathematical operation becomes instructions on
+hardware, and writing one well takes expert knowledge of memory hierarchies and
+thread scheduling. FlashAttention, one of the most consequential kernels of the
+last decade, arrived five years after the architecture it accelerates
+\citep{dao2022flashattention, ouyang2025kernelbench}.
 
 This makes kernel generation an obvious target for language models, and the
-field has moved quickly. Systems now translate PyTorch modules into CUDA,
-search for faster variants, and train against measured speedup
-\citep{li2026cudal1, dai2026cudaagent}. There is something recursive about the
-result: models are beginning to write the infrastructure that runs models.
+field has moved quickly \citep{li2026cudal1, dai2026cudaagent}. The systems
+considered here share a component and a blind spot. The component is a repair
+loop: when a generated kernel fails, the error is returned to the model and
+another attempt is requested, and this reliably raises benchmark scores. The
+blind spot is what counts as failure. A kernel is judged by comparing its
+output against a reference implementation on a few randomly drawn inputs, so a
+kernel that is wrong in a way those inputs do not reach is recorded as correct.
 
-Every one of these systems shares a component and a blind spot. The component
-is a repair loop. When a generated kernel fails, the error is returned to the
-model and another attempt is requested, and this simple idea reliably raises
-benchmark scores. The blind spot is what counts as failure. A kernel is judged
-by comparing its output against a reference implementation on a few randomly
-drawn inputs, and a kernel that is wrong in a way those inputs do not reach
-will be recorded as correct.
+One example shows what that allows. A PyTorch module is handed to a model,
+which returns a CUDA kernel meant to replace it. The benchmark draws a few
+random tensors, runs both versions, finds the outputs match, and records the
+kernel as correct. Now give that kernel the same numbers arranged differently
+in memory, as a slice of a larger tensor rather than a compact block. PyTorch
+handles this without complaint. The kernel, which computed each memory address
+by assuming the numbers were laid out end to end, reads the wrong elements and
+returns the wrong answer. Nothing crashes and no error is printed. The
+benchmark never tried that input, so its verdict does not change. This
+dissertation calls such a kernel a \emph{silent failure}.
 
 Put those two facts together and an uncomfortable possibility appears. If a
 model is repeatedly asked to fix the failures a test can see, it may learn to
-produce kernels whose failures the test cannot see. The benchmark would report
-progress either way.
+produce kernels whose failures the test cannot see, and the benchmark would
+report progress either way.
 
 This dissertation asks whether that happens. The question matters because a
 kernel is a drop-in replacement for a component that already worked. A loud
-failure costs an engineer an afternoon. A silent one returns plausible numbers
+failure costs an engineer an afternoon; a silent one returns plausible numbers
 for as long as nobody checks.
 
 \subsection{Aim and objectives}
@@ -150,8 +192,8 @@ This aim is narrower and sharper than the one in the original proposal, which
 set out to build a general taxonomy of correctness failures. The taxonomy was
 built, and it appears in Section~\ref{sec:taxonomy}, but it turned out to be a
 means rather than an end: the interesting result was not the distribution of
-failure types but the movement between them under repair. I have stated the aim
-as the project actually developed.
+failure types but the movement between them under repair. The aim is stated
+here as the project actually developed.
 
 \subsection{Terminology}
 \label{sec:terminology}
@@ -163,90 +205,74 @@ have their own table in Section~\ref{sec:taxonomy} and are not repeated here.
 
 \begin{description}
 
-\item[Reference module] The original PyTorch implementation that a generated
-kernel is asked to replace. It defines what the kernel is supposed to compute,
-because no other specification exists.
+\item[Reference module] The PyTorch implementation a generated kernel is asked
+to replace. It defines what the kernel should compute, because no other
+specification exists.
 
-\item[Oracle] The procedure that decides whether a test has revealed a fault.
-KernelBench's oracle compares the kernel's output against the reference module
-on five random inputs. Every oracle is incomplete, in the sense that it can
-only inspect the inputs it is given.
+\item[Oracle] The procedure that decides whether a test has revealed a fault;
+KernelBench's oracle compares outputs on five random inputs. Every oracle is
+incomplete, because it can only inspect the inputs it is given.
 
-\item[Probe] One test in the stress battery. A probe transforms the input in a
-specific way, runs both the reference module and the kernel on the transformed
-input, and reports whether they still agree.
+\item[Probe, stress battery] A probe transforms the input, runs both the
+reference module and the candidate on the result, and reports whether they
+still agree. The battery is the full set of probes, run only after a kernel has
+satisfied KernelBench's own check.
 
-\item[Stress battery] The full set of probes, run only after a kernel has
-already satisfied KernelBench's own check. The battery is the stronger oracle
-this work adds.
+\item[Arm] One of the two experimental conditions: \emph{think} with reasoning
+enabled, \emph{direct} with the same model and prompt and reasoning disabled.
 
-\item[Metamorphic relation] A transformation of an input paired with the effect
-it should have on the output. Every probe encodes one. Because a kernel must
-behave like the module it replaces, the expected effect is always that the
-output does not change.
+\item[Turn, chain] A turn is one request to the model, turn~0 being the first
+attempt and turns 1 to 3 repairs. A chain is the sequence of turns for one
+problem, in one arm, on one GPU.
 
-\item[Arm] One of the two experimental conditions. The \emph{think} arm runs
-the model with reasoning enabled; the \emph{direct} arm runs the same model,
-with the same prompt, and reasoning disabled.
-
-\item[Turn] A single request to the model. Turn~0 is the first attempt at a
-problem, and turns 1 to 3 are repair attempts that follow a failure.
-
-\item[Chain] The sequence of turns for one problem, in one arm, on one GPU. A
-chain ends when the kernel passes, when it is judged silent, or after the
-third repair turn.
-
-\item[Visible failure] A kernel that fails in a way KernelBench can see:
-\texttt{syntactic}, \texttt{runtime} or \texttt{functional}. These are the
-failures reported back to the model during repair.
+\item[Visible failure] A failure KernelBench can see, namely
+\texttt{syntactic}, \texttt{runtime} or \texttt{functional}; these are the
+failures reported back during repair.
 
 \item[Silent failure] A kernel that satisfies KernelBench's check and is
-nonetheless wrong, because at least one probe in the battery disagrees with the
-reference module. KernelBench scores such a kernel as a success.
+nonetheless wrong, because a probe disagrees with the reference module.
 
-\item[False-pass rate] Among the kernels KernelBench would report as correct,
-the proportion that are in fact silent failures. Written as
-$\mathit{silent} / (\mathit{silent} + \mathit{pass})$. This is the study's
-central measurement.
-
-\item[Relocation] The effect this dissertation reports: a repair turn converts
-a visible failure into a silent one. The benchmark records the change as a
-successful repair, because the failure it could see has gone.
-
-\item[Strict and extended readings] Two ways of counting a silent failure. The
-\emph{strict} reading condemns a kernel only when it violates KernelBench's own
-stated contract. The \emph{extended} reading condemns any kernel that fails to
-behave like the module it replaces. Results are reported under both, and
-Section~\ref{sec:limitations} explains why.
+\item[Relocation] A repair turn that converts a visible failure into a silent
+one. The benchmark records it as a successful repair, because the failure it
+could see has gone.
 
 \end{description}
 
 \subsection{Contributions}
 
-\textbf{1. A withheld stress battery for generated kernels.} I extend
-KernelBench's correctness check with seven metamorphic probes over memory
-layout, magnitude, dtype and repeated execution, and keep their results out of
+Chapter~2 reviews how kernel generation is evaluated and how repair loops are
+used, and closes in Section~\ref{sec:gap} with the gap this work addresses:
+repair loops are optimised against a correctness check known to be incomplete,
+and no published work measures what repair does to the kernels that survive it.
+Addressing that gap, this project makes the following contributions.
+
+\textbf{1. A withheld stress battery for generated kernels.} KernelBench's
+correctness check is extended with seven kinds of probe over memory layout,
+magnitude, dtype and repeated execution, and their results are kept out of
 the repair prompt so that the model cannot fit them.
 
 \textbf{2. Evidence that repair relocates failures.} Across three models and
-two GPU architectures, iterative repair raises the pass rate and the share of
-passing kernels that are silently wrong at the same time. Of the 244 chains
+two GPU architectures, iterative repair raises the acceptance rate while also
+increasing the share of accepted kernels that are silent failures. Of the 244 chains
 that repair turns into an apparent success, 79, almost one in three, are silent
 failures.
 
-\textbf{3. Evidence that repair destroys the benchmark's discriminating power.}
+\textbf{3. Evidence that repair reduces the benchmark's discriminating power.}
 Under KernelBench's own contract the three models converge after repair to
-between 91.5\% and 93.5\%, a statistical tie in every pairwise test, while the
-stress battery still separates them and reverses their order.
+between 91.5\% and 93.5\%, and no statistically significant pairwise difference
+is detected, while the extended reading produces a wider spread and a different
+ordering.
 
 \textbf{4. A quantified account of where the effect comes from.} 85\% of silent
 failures are caught by one relation, that a kernel must not change its answer
-when the same values arrive through different strides, and I report every
-headline number under both a strict and an extended reading of correctness.
+when the same values arrive through different strides. Because that relation
+extends beyond KernelBench's stated contract, strict and extended correctness
+are distinguished, and the two are compared directly where the distinction
+changes a conclusion.
 
-\textbf{5. An open dataset and a reproducible pipeline.} 2{,}852 classified
+\textbf{5. An accompanying dataset and a reproducible analysis pipeline.} 2{,}852 classified
 kernel attempts, 1{,}196 repair chains and the generated sources, from which
-every figure and table in this report regenerates by running one script.
+every figure and table in this report can be regenerated.
 
 \subsection{Report structure}
 
@@ -255,7 +281,7 @@ correctness rather than measure it, and what is known about repair loops, and
 ends with the gap this work fills. Chapter~3 sets out the experimental design,
 the failure taxonomy, the stress battery and the repair loop. Chapter~4
 describes the implementation and how it was validated. Chapter~5 reports the
-results. Chapter~6 states the limitations, and Chapter~7 concludes.
+results, Chapter~6 sets out the limitations, and Chapter~7 concludes.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 2. LITERATURE REVIEW -- 5 pages
@@ -273,14 +299,19 @@ do, and the tests check whether it does it.
 
 CUDA kernels break this arrangement in two ways.
 
-The first is widely recognised. A kernel is written against a particular memory
+The task is set in PyTorch, a widely used machine learning framework
+\citep{paszke2019pytorch}. A PyTorch module describes a computation
+as a sequence of high-level operations, such as a convolution followed by an
+activation, and the framework calls a library routine for each. Replacing that
+module with a CUDA kernel means writing the same computation directly against
+the GPU.
+
+The first difficulty is widely recognised. A kernel is written against a particular memory
 hierarchy and thread model, so good performance depends on hardware knowledge
-that the source code never states \citep{kirk2012programming}. FlashAttention
-illustrates the cost. It is an attention kernel that reduces traffic between
-levels of GPU memory, and it required years of expert effort
-\citep{dao2022flashattention}. \citet{ouyang2025kernelbench} observe that it
-appeared five years after the Transformer was proposed, and needed two further
-years to reach a new generation of GPUs.
+that the source code never states \citep{kirk2012programming}. FlashAttention,
+an attention kernel that reduces traffic between levels of GPU memory, required
+years of expert effort \citep{dao2022flashattention}, and needed two further
+years to reach a new generation of GPUs \citep{ouyang2025kernelbench}.
 
 The second difficulty attracts less attention, and it is the subject of this
 dissertation. A kernel has no docstring. It is not written against a
@@ -306,7 +337,10 @@ cases, so the benchmark is far from solved.
 The correctness half of that score rests on a single procedure. The authors
 ``evaluate on 5 random inputs per problem'', checking ``equivalence of output
 between reference architecture \texttt{Model} and generated architecture with
-custom kernel \texttt{ModelNew}''.
+custom kernel \texttt{ModelNew}''. In that notation \texttt{Model} is the
+original PyTorch module and \texttt{ModelNew} is the generated replacement built
+around a CUDA kernel. They are called the reference module and the candidate
+throughout.
 
 They explain the choice openly. Proving two programs equivalent is undecidable,
 so they adopt random testing, which they describe as ``the most common
@@ -334,7 +368,7 @@ simplifying the CUDA code into a safer but slower program''. Both establish
 that the score can be gamed. Neither asks the simpler question: how often is
 the score merely wrong?
 
-\subsection{Tests do not measure correctness, they define it}
+\subsection{Tests do not measure correctness; they define it}
 \label{sec:oracle}
 
 Software engineering has a name for the difficulty reached at the end of the
@@ -353,15 +387,15 @@ previously undetected wrong code'' and reduced pass@k by up to 19.3--28.9\%.
 
 The more troubling result concerns the ranking. Two models that lost to ChatGPT
 on the original benchmark defeated it on the extended one. A weak oracle does
-not flatter every model by the same amount. It reorders them.
+not flatter every model by the same amount; it reorders them.
 
 Metamorphic testing offers a disciplined way to add tests when the correct
 answer is not known in advance. Instead of checking a single output, it
 transforms the input and observes how the output ``morphs'' in response
 \citep{segura2016metamorphic}. For a kernel offered as a drop-in replacement,
 one such relation is almost too obvious to state: the same values, presented
-through a different memory layout, must produce the same result. No kernel
-benchmark applies it.
+through a different memory layout, must produce the same result. None of the
+kernel benchmarks reviewed here applies it.
 
 \citet{ludwig2026kaizen} show what happens when somebody applies it in a
 neighbouring setting. Testing LLM-translated CUDA-to-OpenMP code, they found
@@ -372,8 +406,8 @@ they use no repair loop, but the failure mode is the one measured here.
 
 That failure mode already has a name outside software testing. Studies of large
 server fleets describe corruptions in which ``the only symptom is an erroneous
-computation'' \citep{hochschild2021cores}. I adopt the same word, silent, for a
-kernel that passes the benchmark and returns the wrong answer.
+computation'' \citep{hochschild2021cores}. The same word, silent, is adopted
+here for a kernel that passes the benchmark and returns the wrong answer.
 
 \subsection{Repair loops and the signal they learn from}
 \label{sec:repair}
@@ -422,17 +456,18 @@ verification and profiling to provide reliable reward signals''
 dai2026cudaagent, chen2025cudallm}. Reasoning models, which work through
 intermediate steps before answering \citep{wei2022cot}, perform best throughout.
 
-What every one of these systems feeds back is the same short list: whether the
-code compiled, whether it crashed, how fast it ran, and whether it matched the
+Across these systems the feedback is the same short list: whether the code
+compiled, whether it crashed, how fast it ran, and whether it matched the
 reference on the standard inputs. None of them feeds back anything about memory
 layout.
 
 \subsection{The gap}
+\label{sec:gap}
 
 Two lines of work meet in this dissertation, and they have not met before.
 
-Every recent CUDA kernel system repairs, returning compiler errors and failed
-comparisons to the model and asking again. Software testing has argued for
+The recent CUDA kernel systems reviewed here all repair, returning compiler
+errors and failed comparisons to the model and asking again. Software testing has argued for
 decades that such comparisons are incomplete oracles, and that adding tests to
 a benchmark exposes code that was wrong from the start.
 
@@ -442,7 +477,8 @@ making the kernel worse. Neither measured what repair does to correctness
 across several turns.
 
 So the question remains unasked. When a model repairs its own kernel, does the
-kernel become correct, or only harder to catch? I measure that.
+kernel become correct, or only harder to catch? That is what this project
+measures.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 3. DESIGN -- 8 pages
@@ -456,30 +492,39 @@ better than the judge it answers to, and every kernel system answers to a judge
 that Section~\ref{sec:oracle} shows to be incomplete. This chapter describes an
 experiment built to test that prediction.
 
-The experiment needs three things, and no existing harness provides them
-together.
+Testing that prediction requires three things, and no existing harness provides
+them together.
 
-First, it needs a correctness check stronger than the benchmark's. Without one,
-a kernel that is wrong cannot be told apart from a kernel that is right.
+First, a correctness check stronger than the benchmark's. Without one, a wrong
+kernel cannot be told from a right one.
 
 Second, that stronger check must be hidden from the model. If the model can see
-it, the model will repair against it, and the measurement collapses.
+it, the model will repair against it.
 
-Third, the same kernel must be measured before and after repair. Only then can
-a change be attributed to repair rather than to chance in a fresh sample.
+Third, the same problem must be followed through a repair chain, with every
+kernel version recorded, so that any change can be attributed to repair.
 
-The design below provides all three. KernelBench's own check is kept exactly as
-it is, and treated as the benchmark's verdict. A battery of further checks is
-added, and is never shown to the model. A repair loop then runs, driven only by
-the benchmark's verdict, and every intermediate kernel is recorded.
+The design below provides all three. KernelBench's check is kept in form as the
+benchmark's verdict, with one tightened tolerance that Section~\ref{sec:classifier}
+states and Section~\ref{sec:limitations} returns to, a battery of further checks is added and never shown to
+the model, and a repair loop runs driven only by that verdict, recording every
+intermediate kernel.
+
+KernelBench is used rather than a stricter benchmark such as
+\texttt{robust-kbench} \citep{lange2025robustkbench} for the same reason. The
+weak oracle is the object of study, not an obstacle to it, and replacing it
+with a stronger one would remove the very thing whose consequences this work
+measures.
 
 One further control shapes the whole study. Comparing a reasoning model with a
 non-reasoning model would confuse reasoning with everything else that differs
-between two checkpoints: training data, size, tokeniser, alignment. I avoid
-this by running two arms on the same model. Both arms use the same prompt and
-the same temperature. The only difference is the \texttt{reasoning\_effort}
-parameter, set to \texttt{high} in one arm and \texttt{none} in the other. Any
-gap between the arms can therefore be attributed to reasoning alone.
+between two checkpoints: training data, size, tokeniser, alignment. This is
+avoided by running two arms on the same model, using the same prompt and the
+same temperature. The only difference is the \texttt{reasoning\_effort}
+parameter, set to \texttt{high} in one arm and \texttt{none} in the other. The
+extremes are used rather than intermediate settings so that the contrast is as
+large as the parameter allows. This isolates the reasoning setting while
+avoiding checkpoint-level confounds.
 
 This contrast is stronger than the paired-checkpoint comparison used in most
 earlier work. It is possible only because current models expose reasoning as a
@@ -488,11 +533,17 @@ runtime switch over fixed weights \citep{qwen2025qwen3}.
 \subsection{A taxonomy of kernel failures}
 \label{sec:taxonomy}
 
-KernelBench reports one bit: correct, or not. That bit hides distinctions which
-matter for diagnosis. I therefore classify every generated kernel into one of
-five categories, shown in Table~\ref{tab:taxonomy}.
+KernelBench reports one bit, correct or not, and that bit hides distinctions
+which matter for diagnosis. Every generated kernel is therefore classified into one
+of five categories, shown in Table~\ref{tab:taxonomy}.
 
-\begin{table}[h]
+The categories are ordered, and the first one that matches wins. This makes
+each label deterministic, because a kernel that fails to build is never also
+tested for numerical accuracy. The order runs from the most visible failure to
+the least visible, which is also the order in which a developer would meet
+them.
+
+\begin{table}[htbp]
 \centering
 \begin{tabular}{ll}
 \toprule
@@ -510,20 +561,20 @@ kernel receives exactly one label.}
 \label{tab:taxonomy}
 \end{table}
 
-The categories are ordered, and the first one that matches wins. This makes
-each label deterministic, because a kernel that fails to build is never also
-tested for numerical accuracy. The order runs from the cheapest and most
-visible failure to the most expensive and least visible. It is also the order
-in which a developer would meet them.
-
 \texttt{silent} is the category this dissertation exists to measure. A silent
 kernel compiles, runs, and agrees with the reference module on the inputs
-KernelBench draws. Under KernelBench it is a success, and it counts towards
-$\mathrm{fast}_p$. It is nonetheless wrong.
+KernelBench draws. Under KernelBench it is a success and counts towards
+$\mathrm{fast}_p$, and it is nonetheless wrong.
 
 The other four categories exist mainly so that \texttt{silent} can be separated
 cleanly from them. The rest of this chapter explains how each label is
 assigned.
+
+Two further labels appear in the results and fall outside this taxonomy,
+because they describe the attempt rather than the kernel: \texttt{empty} marks
+a response that contained no code block, and \texttt{error} a fault in the
+harness. Neither is counted as an accepted kernel, and together they account
+for under 2\% of attempts.
 
 \begin{figure}[htbp]
 \centering
@@ -591,75 +642,117 @@ The classifier runs a fixed sequence of stages. Algorithm~\ref{alg:classify}
 gives the sequence, and the rest of this section explains three decisions
 inside it.
 
-\begin{algorithm}[h]
+\begin{algorithm}[H]
 \caption{Classifying one generated kernel}
 \label{alg:classify}
+\begin{spacing}{1.0}
 \begin{algorithmic}[1]
-\State seed the generator; build the reference model from the problem
-\State \textbf{compile} the generated source \Comment{\texttt{load\_inline} builds here}
-\If{compilation fails} \Return \texttt{syntactic} \EndIf
-\State seed again; construct the candidate model with identical weights
-\State run one forward pass on the standard input; \Call{synchronize}{}
-\If{it raises} \Return \texttt{runtime} \EndIf
-\State time one \emph{warm} forward call
-\If{it exceeds the per-call budget} \Return \texttt{runtime} \EndIf
-\State run \texttt{compute-sanitizer}
-\If{a memory violation is reported} \Return \texttt{runtime} \EndIf
-\State compare candidate and reference output on the standard input
-\If{they disagree} \Return \texttt{functional} \EndIf
-\State run the stress battery (Section~\ref{sec:battery})
-\If{any probe disagrees} \Return \texttt{silent} \EndIf
+\State seed the generator; build the reference module from the problem
+\State \textbf{compile} the generated source \Comment{Stage 1: does it build?}
+\State \textbf{if} compilation fails \textbf{then return} \texttt{syntactic}
+\State seed again; construct the candidate module with identical weights
+\State run one forward pass on the standard input, then synchronise
+  \Comment{Stage 2a: does it run?}
+\State \textbf{if} it raises \textbf{then return} \texttt{runtime}
+\State time one warm forward call \Comment{Stage 2b: can it be evaluated?}
+\State \textbf{if} it exceeds the forward-time limit \textbf{then return} \texttt{runtime}
+\State run \texttt{compute-sanitizer} \Comment{Stage 2c: does it violate memory?}
+\State \textbf{if} a violation is reported \textbf{then return} \texttt{runtime}
+\State compare candidate and reference output \Comment{Stage 3: right on the standard input?}
+\State \textbf{if} they disagree \textbf{then return} \texttt{functional}
+\State run the stress battery \Comment{Stage 4: right under stress?}
+\State \textbf{if} any probe disagrees \textbf{then return} \texttt{silent}
 \State \Return \texttt{pass}
 \end{algorithmic}
+\end{spacing}
 \end{algorithm}
 
 \textbf{Weight synchronisation.} Many Level 2 problems contain learnable
 parameters. If the reference module and the candidate module are built from
 different random draws, they hold different weights. Their outputs then differ
 for reasons that have nothing to do with the kernel, and every kernel looks
-wrong. Following KernelBench, I reseed the random generator three times: before
+wrong. Following KernelBench, the random generator is reseeded three times: before
 the initialisation inputs are produced, before each module is constructed, and
 before every input draw. The two modules then hold identical weights and see
-identical data. An early version of this work missed one of these reseeds, and
-produced a false-pass rate that meant nothing.
+identical data.
 
-\textbf{A budget per forward call.} One classification issues roughly ninety
-forward calls, between the battery probes and the timing runs. A container time
-limit is therefore really a budget per call. A kernel that needs tens of
-seconds per call cannot finish inside the limit. Worse, it used to produce no
-record at all, which quietly removed the slowest kernels from the dataset.
-Stage 2a$'$ now times a single \emph{warm} call using CUDA events, and rejects
-the kernel at once if it exceeds the budget. The call must be warm because the
-first call also pays for lazy module loading and CUDA context setup, and is
-not a fair sample.
+\textbf{A limit on forward time.} A full classification issues roughly ninety
+forward calls, so a kernel taking tens of seconds per call cannot be evaluated
+at all. Stage 2b times one warm call and labels such a kernel \texttt{runtime},
+rather than letting it exhaust the container and disappear from the dataset
+unlabelled. The call is timed warm because the first also pays for module
+loading. The limit is raised on slower hardware, so that no kernel is rejected
+merely for running on a slower device.
 
-The two limits are coupled. A T4 runs roughly 3.8 times slower than an L4, so a
-budget that is correct on one device rejects kernels on the other for being
-slow rather than for being wrong. The configuration refuses an inconsistent
-pair rather than produce data that looks valid and is not.
+\textbf{The sanitizer stage did not run.} Stage 2c invokes NVIDIA's
+\texttt{compute-sanitizer} to detect memory violations that do not crash the
+program. The stage is implemented and is exercised by the validation suite, but
+it reports that the device is unsupported on both GPUs available for this work,
+so it contributed no labels to the results in Chapter~5. Races and non-crashing
+out-of-bounds reads are therefore undetected throughout, and
+Section~\ref{sec:limitations} returns to what that costs.
 
 \textbf{A comparison tolerance.} Outputs are compared with an absolute and
 relative tolerance of $10^{-3}$, applied recursively through tuples, lists and
 dictionaries so that structured returns are handled. The tolerance is a real
-choice. Set it too tight, and ordinary floating-point reassociation is reported
-as a fault. Set it too loose, and a genuinely wrong kernel passes.
+choice: set it too tight and ordinary floating-point reassociation is reported
+as a fault; set it too loose and a genuinely wrong kernel passes.
+
+The value used here is tighter than the $10^{-2}$ that KernelBench states for
+its own tasks. A kernel whose output differs from the reference by between the
+two thresholds is therefore labelled \texttt{functional} here, while a standard
+KernelBench harness would accept it. The acceptance rates in Chapter~5 are
+consequently not identical to those KernelBench itself would report, and
+Section~\ref{sec:limitations} returns to what that means.
 
 \subsection{The stress battery}
 \label{sec:battery}
 
-The battery is the stronger oracle promised in the research design.
+The battery is the stronger oracle promised in the research design. Because it
+carries the study's central measurement, it is worth restating plainly what it
+is before the individual probes are described.
 
-Each probe presents inputs that the standard check never uses. It then compares
-the candidate against the reference on those same inputs. A probe can therefore
-only fail when the two implementations disagree. This matters, because the
-battery never holds its own idea of the right answer. It cannot punish a kernel
-for anything except differing from the module it claims to replace.
+The battery is a fixed set of additional tests that runs only after a kernel has
+already satisfied KernelBench's own check at stage 3. A kernel that fails
+earlier never reaches it, so the battery is applied exactly to the population
+the benchmark would have declared correct. Each test, called a probe, derives a
+new input from the standard one, runs both the reference module and the
+candidate on that input, and records whether the two still agree. A kernel that
+survives every probe is labelled \texttt{pass}; a kernel that fails any probe is
+labelled \texttt{silent}. The outcome is recorded but never shown to the model,
+for the reason given in Section~\ref{sec:repairloop}.
 
-Each probe encodes a metamorphic relation in the sense of
-\citet{segura2016metamorphic}. Such a relation pairs a transformation of the
-input with the expected effect on the output. Here the expected effect is
-always the same: the output must not change. Table~\ref{tab:probes} lists the
-probes.
+Two properties of that design matter. Each probe presents inputs the standard
+check never uses, and it compares the candidate against the reference on those
+same inputs rather than against a stored expected answer. A probe can therefore
+only fail when the two implementations disagree. The battery never holds its own
+idea of the right answer, so it cannot punish a kernel for anything except
+differing from the module it claims to replace. This also means the battery
+inherits the reference module as its definition of correct: if PyTorch and the
+kernel agree on a transformed input, the probe passes, whatever that answer
+happens to be.
+
+Each probe pairs a transformation of the input with a check on the output. The
+transformations follow the metamorphic approach described by
+\citet{segura2016metamorphic}, in which new test inputs are derived from an
+existing one rather than invented from scratch. The check is differential: the
+reference module and the candidate are both run on the transformed input, and
+the candidate must agree with the reference. \citet{ludwig2026kaizen} combine
+the same two techniques for translated HPC code.
+
+The transformations differ in what they preserve, and the distinction matters.
+Restriding a tensor, or repeating an identical call, leaves the correct output
+unchanged, so those two probes are metamorphic relations in the strict sense:
+the candidate must return exactly what it returned before. The remaining probes
+change the input values, so the correct output changes with them, and the
+invariant is only that the candidate continues to match the reference.
+Table~\ref{tab:probes} lists the seven kinds of probe. They amount to nine
+individual checks, because the fresh-draw probe is run three times. The seven
+were chosen to cover the properties a kernel might silently depend on but which
+the standard input merely happens to supply: the particular values drawn, their
+layout in memory, their magnitude, their element type, and the absence of state
+carried between calls. The set is not exhaustive, and
+Section~\ref{sec:limitations} treats that as a limitation.
 
 \begin{table}[h]
 \centering
@@ -684,40 +777,45 @@ fixed, and requires the candidate to agree with it on the transformed input.}
 One probe deserves separate comment, because it dominates the results.
 \texttt{non\_contig} builds a tensor holding exactly the same values as the
 standard input, but presented through non-unit strides. It does this by
-stacking the tensor with itself and taking one slice. A kernel that indexes raw
+stacking the tensor with itself and taking one slice, a construction chosen
+because it alters the strides while leaving the shape and every value
+untouched; a transpose or a permutation would also reorder the data, which
+would confound layout with order. A kernel that indexes raw
 pointers, assuming a dense row-major layout, then reads the wrong elements and
 returns a wrong answer. A kernel that calls \texttt{.contiguous()}, or respects
 the strides it is given, returns the right one. KernelBench draws only
 contiguous tensors, so this fault is invisible to it by construction.
 
-Two rules keep the headline number honest. Both were added after early runs
-produced figures that were wrong in the flattering direction.
+Two rules keep the headline number honest.
 
-The first rule is that a harness fault is never charged to the kernel. If a
-probe raises because the machine ran out of memory, or because the harness
-itself failed, the probe records \texttt{skipped} and the kernel is not
-condemned. Before this rule, an out-of-memory error during the probes on a
-16\,GB card turned working kernels into silent failures, and inflated the
-study's headline metric.
+The first is that a harness fault is never charged to the kernel. If a probe
+raises because the machine ran out of memory, or because the harness itself
+failed, the probe records \texttt{skipped} and the kernel is not condemned.
+Otherwise a 16\,GB card would convert working kernels into silent failures
+whenever memory ran short, and inflate the study's central measurement.
 
-The second rule is that refusing a dtype is not failing it. A kernel compiled
-against \texttt{data\_ptr<float>()} cannot accept half-precision input, and
-raises before a single thread runs. That is the kernel enforcing its declared
-contract, not computing a wrong answer, so it is recorded as a robustness flag
-rather than a silent failure. Before this rule every passing kernel carried an
-\texttt{fp16} failure, and a probe that fires on all passing kernels measures
-the harness rather than the kernel.
+The second is that refusing a dtype is not failing it. A kernel is compiled
+against a specific element type, so one written for 32-bit floats rejects
+half-precision input before a single thread runs. That is the kernel enforcing
+the contract it declared, not computing a wrong answer, so it is recorded as a
+robustness flag rather than a silent failure.
 
 \subsection{The repair loop}
+\label{sec:repairloop}
 
 After a failure the model is shown its own source and the actual error, and
-asked again. The loop runs for up to three further turns.
+asked again. The loop runs for up to three further turns. Three is a
+compromise between giving repair a fair chance and spending model calls on
+chains that will not recover, and the results justify it after the fact: of the
+chains repair rescues, 59\% reach a passing kernel on the first repair turn and
+only 14\% on the third, so a fourth turn would add little.
 
 Only \texttt{syntactic}, \texttt{runtime}, \texttt{functional} and
 \texttt{empty} are repairable, and \texttt{pass} and \texttt{silent} end the
 chain. The feedback is deliberately plain: the compiler's own message, the
-exception, or the reported numerical mismatch. Logs are truncated from the end,
-because \texttt{nvcc} puts the decisive line last.
+exception, or the reported numerical mismatch. Logs are truncated to their last 800
+characters, because \texttt{nvcc} puts the decisive line last and the output
+before it is largely repeated build commands.
 
 The most important decision in this design is what the loop is \emph{not}
 told.
@@ -727,38 +825,55 @@ exactly the way a passing kernel does, and the model is never told that a
 stress probe disagreed.
 
 This is not a convenience. \citet{huang2024cannot} show that reported gains
-from self-correction in earlier work came from oracle labels guiding the
-process, and that those gains disappear once the labels are withdrawn. A stress
-battery fed back into the prompt would be exactly such an oracle label. The
-model would repair against it, the false-pass rate would fall, and that fall
-would measure the model's skill at fitting a held-out test rather than any real
-improvement in correctness. Withholding stage 4 keeps the battery an
-independent instrument instead of part of the training signal, and it is what
-makes the false-pass rate in Section~\ref{sec:relocation} meaningful.
-
-The choice also matches deployment. A developer running a repair loop against
-KernelBench sees compiler errors and failed comparisons. They do not see a
-stress battery, because they do not have one.
+from self-correction came from oracle labels guiding the process, and that they
+disappear once those labels are withdrawn. A battery fed back into the prompt
+would be exactly such a label: the model would repair against it, the
+false-pass rate would fall, and the fall would measure the model's skill at
+fitting a held-out test rather than any improvement in correctness. Withholding
+stage 4 keeps the battery an independent instrument. It also matches
+deployment, since a developer running a repair loop against KernelBench sees
+compiler errors and failed comparisons, not a stress battery.
 
 \subsection{Experimental plan}
 
 \textbf{Models.} Three models are evaluated: GLM-5, DeepSeek V3.2 and
-Qwen3-235B-A22B, each served through Amazon Bedrock.
+Qwen3-235B-A22B (hereafter Qwen3-235B), each served through Amazon Bedrock.
 
-The selection criterion was not capability but controllability. The two-arm
-design needs a model whose reasoning can genuinely be turned off. Several
-otherwise suitable candidates reason regardless of the parameter, and those
-were rejected: their \texttt{direct} arm would silently have been a second
-\texttt{think} arm, and the central contrast would have been empty. This limits
-generality, and I state it as a limit. The findings apply to models that expose
-reasoning as a runtime switch.
+Models were selected for experimental controllability rather than for benchmark
+performance. The two-arm design needs a model whose reasoning can genuinely be
+turned off, and this was tested rather than assumed. Several otherwise suitable
+candidates continued to reason regardless of the parameter, and those were
+rejected: their \texttt{direct} arm would silently have been a second
+\texttt{think} arm, and the central contrast would have been empty. Among the
+models that honoured the switch, the three chosen come from three different
+developers, so a result common to all three is less likely to be a property of
+one training pipeline.
+
+Two further constraints shaped the choice, the first of which is cost. The
+design issues
+one model call per problem, per arm, per turn, which came to 1{,}448
+generations and roughly 8.5 million tokens. Frontier proprietary models are
+priced well above the open-weight models used here, and at this volume that gap
+separates an experiment that can be run from one that cannot. The question under study is what a repair loop does to a benchmark
+verdict, not which model writes the best kernels, so paying for the strongest
+available models would have raised the cost without changing what is measured.
+
+The second constraint is uniformity. Serving all three models through a single
+provider means one client library, one prompt format and one set of parameters,
+so no difference between models can be attributed to the harness. Proprietary
+frontier models such as Claude and GPT were considered and set aside on both
+grounds: each exposes reasoning through its own interface, which would have
+introduced a second source of variation alongside the one under study, and each
+is substantially more expensive per token at this scale. This restricts
+generality, and it is stated here as a limitation. The findings apply to models that
+expose reasoning as a runtime switch.
 
 \textbf{Tasks.} KernelBench Level 2, the fusion tier, in which several PyTorch
 operators must be combined into one kernel. Level 1 is excluded because
 single-operator problems are largely solved and produce too few failures to
 analyse. Level 3 is excluded for time, and Section~\ref{sec:limitations}
-returns to that exclusion. All 100 Level 2 problems are used, in ten stratified
-batches of ten, so that a partial run still covers the full difficulty range.
+returns to that exclusion. All 100 Level 2 problems are used, so no sampling
+decision can bias which failures are observed.
 
 \textbf{Hardware.} Every problem runs on two GPUs: an Ada-generation L4 and a
 Turing-generation T4. Both use one pinned CUDA image and one pinned set of
@@ -768,14 +883,58 @@ an artefact of a single device.
 
 \textbf{Determinism.} Temperature is zero, and one sample is drawn per problem,
 per arm, per turn. Each cell of the design is therefore a single greedy
-generation. This makes the experiment cheap and exactly reproducible, at the
-cost of confidence intervals, and Section~\ref{sec:limitations} examines that
-cost. The benchmark dataset is pinned to one revision, so later upstream edits
+generation. The design consequently measures no variation between repeated
+generations of the same problem, and Section~\ref{sec:limitations} states what
+this excludes. The benchmark dataset is pinned to one revision, so later upstream edits
 cannot change what was run.
 
 The full design is 3 models $\times$ 2 arms $\times$ 2 GPUs $\times$ 100
 problems $\times$ 4 turns. It is evaluated lazily: a chain stops as soon as it
 reaches \texttt{pass} or \texttt{silent}.
+
+\subsection{Metrics and units of analysis}
+\label{sec:metrics}
+
+Three different quantities are easy to confuse, so each is named separately and
+used consistently from here on.
+
+\begin{description}
+\item[Acceptance rate] The share of kernels KernelBench would report as
+correct, which is the \texttt{pass} and \texttt{silent} categories together.
+This is the number a standard harness prints.
+\item[Full-battery pass rate] The share of kernels that satisfy KernelBench's
+check \emph{and} survive every probe, which is the \texttt{pass} category
+alone.
+\item[False-pass rate] The share of accepted kernels that are silent, written
+$\mathit{silent} / (\mathit{silent} + \mathit{pass})$. Equivalently, it is the
+difference between the acceptance rate and the full-battery pass rate, divided
+by the acceptance rate. It is the study's central measurement.
+\end{description}
+
+\textbf{Strict and extended correctness.} Repeated random draws and the
+determinism check test only what KernelBench's contract already promises, so a
+kernel failing them is wrong under any reading. The remaining probes, which
+restride the input or change the magnitude or type of its values, go beyond
+that contract. \emph{Strict} correctness condemns a kernel only on the first
+group; \emph{extended} correctness, which treats the kernel as a drop-in
+replacement, condemns it on either. Chapter~5 reports
+false-pass rates under the extended reading, and compares the two readings
+directly where the distinction changes a conclusion, in
+Section~\ref{sec:ranking}.
+
+\textbf{Unit of analysis.} A \emph{chain} is one problem attempted by one model
+in one arm on one device, and contains up to four \emph{attempts}, one per
+turn. Rates are computed over chains, using the first attempt for a one-shot
+figure and the last for a post-repair figure. Where the two GPUs are pooled
+each problem contributes twice, so pooled and per-device results are reported
+separately.
+
+\textbf{Statistical tests.} McNemar's test compares two models over the same
+problems, because those observations are paired. Fisher's exact test compares
+two disjoint sets of kernels, those accepted at the first attempt against those
+repair made acceptable. A bootstrap over problems gives an
+interval for a single rate. None of these measures variation between repeated
+generations, which the design does not capture.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 4. IMPLEMENTATION -- 5 pages
@@ -786,223 +945,170 @@ reaches \texttt{pass} or \texttt{silent}.
 \label{sec:architecture}
 
 The system is organised around one rule: code that decides an outcome must be
-testable without a GPU.
-
-Everything in the \texttt{kfault} package is therefore pure Python. It makes no
-API calls, touches no GPU, and opens no network connection. The classifier, the
-stress battery, the output comparison, the repair feedback and the analysis all
-live there. Only the scripts at the top level talk to Modal or to the model
-provider. Table~\ref{tab:modules} lists the parts.
-
-\begin{table}[h]
-\centering
-\begin{tabular}{ll}
-\toprule
-module & responsibility \\
-\midrule
-\multicolumn{2}{l}{\emph{\texttt{kfault/}: pure logic, no GPU or network}} \\
-\texttt{classifier.py} & the four stages of Algorithm~\ref{alg:classify} \\
-\texttt{battery.py}    & the stress probes \\
-\texttt{comparison.py} & output comparison, tree mapping, cloning \\
-\texttt{analysis.py}   & chains, distributions, false-pass rates \\
-\texttt{benchmark.py}  & interleaved CUDA-event timing \\
-\texttt{repair.py}     & repair feedback and repairable categories \\
-\texttt{prompts.py}    & prompt construction and response parsing \\
-\texttt{generation.py} & model calls and the generation cache key \\
-\texttt{sanitizer.py}  & \texttt{compute-sanitizer} driver and output parsing \\
-\texttt{cache.py}      & stable keys and atomic writes \\
-\texttt{config.py}     & every tunable, and the guards between them \\
-\texttt{report.py}     & formatting for the console summaries \\
-\midrule
-\multicolumn{2}{l}{\emph{top level: infrastructure}} \\
-\texttt{pipeline.py}   & Modal app: generate, classify, repair \\
-\texttt{validate.py}   & known-answer validation of the classifier \\
-\texttt{export.py}     & cache to CSV and kernel sources \\
-\texttt{figures.py}    & CSV to figures \\
-\bottomrule
-\end{tabular}
-\caption{Module responsibilities. The horizontal rule marks the boundary
-between logic that runs anywhere and code that needs Modal.}
-\label{tab:modules}
-\end{table}
-
-The split exists for one practical reason. Because the classifier and the
-battery carry no infrastructure, their behaviour can be checked on an ordinary
-laptop. The 86 unit tests described in Section~\ref{sec:validation} run in four
-milliseconds, with no GPU, no container and no cost. A design that mixed the
-two would have made every logic change an experiment.
+testable without a GPU. Everything in the pure package therefore makes no API
+calls, touches no GPU and opens no network connection, and only the top-level
+scripts talk to the model provider or to Modal, the cloud platform used to
+obtain GPUs on demand. Table~\ref{tab:modules} lists the parts.
 
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
   every node/.style={font=\small},
-  comp/.style={draw, rounded corners=1pt, minimum height=7mm,
-               text width=25mm, align=center, font=\small\ttfamily,
-               fill=white},
+  comp/.style={draw, rounded corners=1pt, minimum height=8mm,
+               text width=28mm, align=center, font=\small, fill=white},
   pkg/.style={draw, densely dashed, rounded corners=3pt, inner sep=5mm},
   dep/.style={-{Straight Barb[length=2mm]}, densely dashed}
 ]
 
-% top-level scripts
-\node[comp] (pipeline) {pipeline.py};
-\node[comp, right=5mm of pipeline] (validate) {validate.py};
-\node[comp, right=5mm of validate] (export) {export.py};
-\node[comp, right=5mm of export] (figures) {figures.py};
+\node[comp, text width=42mm] (orch) {orchestration\\generate, classify, repair};
 
-% pure package: three rows, dependency targets on the first row
-\node[comp, below=24mm of pipeline] (classifier) {classifier.py};
-\node[comp, right=5mm of classifier] (battery) {battery.py};
-\node[comp, right=5mm of battery] (comparison) {comparison.py};
-\node[comp, right=5mm of comparison] (analysis) {analysis.py};
+\node[comp, below=20mm of orch, xshift=-32mm] (classifier) {classifier};
+\node[comp, right=6mm of classifier] (battery) {stress battery};
+\node[comp, right=6mm of battery] (repairm) {repair feedback};
 
-\node[comp, below=5mm of classifier] (benchmark) {benchmark.py};
-\node[comp, right=5mm of benchmark] (repair) {repair.py};
-\node[comp, right=5mm of repair] (prompts) {prompts.py};
-\node[comp, right=5mm of prompts] (generation) {generation.py};
-
-\node[comp, below=5mm of benchmark] (sanitizer) {sanitizer.py};
-\node[comp, right=5mm of sanitizer] (cache) {cache.py};
-\node[comp, right=5mm of cache] (config) {config.py};
-\node[comp, right=5mm of config] (report) {report.py};
+\node[comp, below=6mm of classifier] (comparison) {output comparison};
+\node[comp, right=6mm of comparison] (prompts) {prompts};
+\node[comp, right=6mm of prompts] (config) {configuration};
 
 \begin{scope}[on background layer]
-  \node[pkg, fit=(pipeline)(figures),
-        label={[font=\small\itshape]above left:
-        top level: Modal, network, GPU}] (top) {};
-  \node[pkg, fit=(classifier)(analysis)(sanitizer)(report),
-        label={[font=\small\itshape]below left:
-        \texttt{kfault/}: pure logic, no GPU, no network}] (pure) {};
+  \node[pkg, fit=(orch)] (top) {};
+  \node[pkg, fit=(classifier)(repairm)(comparison)(config),
+        label={[font=\small\itshape]below:{pure logic: no GPU, no network}}] (pure) {};
 \end{scope}
 
-\draw[dep] (pipeline.south)  -- (classifier.north);
-\draw[dep] (validate.south)  -- (classifier.north east);
-\draw[dep] (export.south)    -- (analysis.north west);
-\draw[dep] (figures.south)   -- (analysis.north);
+\draw[dep] (orch.south) -- (battery.north);
+\draw[dep] (orch.south) -- (classifier.north east);
+\draw[dep] (orch.south) -- (repairm.north west);
 
 \end{tikzpicture}
-\caption{Component structure, with dashed arrows showing UML dependencies.
-They run in one direction only: the top-level scripts import the pure package,
-and nothing in \texttt{kfault/} imports Modal, the model client or CUDA. Only
-the principal dependency of each script is drawn; \texttt{pipeline.py} also
-uses \texttt{cache}, \texttt{config}, \texttt{prompts} and \texttt{repair}.
-This structure is what allows the classifier, the battery and the analysis to
-be tested without a GPU.}
+\caption{Component and dependency structure. Dependencies run in one direction
+only: orchestration uses the pure logic, and nothing in the pure logic reaches
+a GPU, a network or the model provider. This is what allows the classifier, the
+battery and the repair feedback to be tested without hardware.}
 \label{fig:components}
 \end{figure}
 
-One module does not respect the rule. \texttt{pipeline.py} defines the
-container image, looks up the cache, orchestrates the repair chain and provides
-the command line, all in one file. It is the least cohesive part of the system.
-Splitting the image definition from the orchestration would be the first change
-I would make if the work continued.
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+\toprule
+component & responsibility \\
+\midrule
+classifier        & the stages of Algorithm~\ref{alg:classify} \\
+stress battery    & the probes of Table~\ref{tab:probes} \\
+output comparison & comparison across nested return structures \\
+repair feedback   & what is reported back, and what is withheld \\
+prompts           & prompt construction and response parsing \\
+configuration     & every tunable, and the guards between them \\
+\midrule
+orchestration     & generation, classification and repair on the GPU platform \\
+\bottomrule
+\end{tabular}
+\caption{Responsibilities either side of the boundary. Everything above the
+rule is pure logic and runs anywhere.}
+\label{tab:modules}
+\end{table}
 
+The split exists for one practical reason. Because the classifier and the
+battery carry no infrastructure, their behaviour can be checked on an ordinary
+laptop without a GPU. A design that mixed the two would have turned every
+change to the logic into an experiment.
+
+
+
+The orchestration component is the least cohesive part of the system, since it
+both defines the execution environment and drives the repair chain. Separating
+the two would be the first structural change to make.
+
+\FloatBarrier
 \subsection{Execution environment}
 
 Generated code is untrusted. A model asked for a CUDA kernel can return
 anything, and that code is compiled and executed. Each classification therefore
-runs in a single-use container with the network blocked and access to other
-Modal resources withdrawn. The container is destroyed afterwards, so no
-generated kernel can affect the next one.
+runs on Modal in a container, an isolated environment with its own filesystem,
+that is used once and then destroyed. The network is blocked and access to
+other resources in the account is withdrawn, so a generated kernel can reach
+nothing outside its own container and cannot affect the next one.
 
 Reproducibility requires the environment to be fixed rather than merely
-described. The CUDA image is pinned by its SHA-256 digest rather than by tag,
-because a tag can be repointed to a new build. The Python packages are pinned
+described. Every run used CUDA 12.4 with the same pinned Python packages, and
+the environment is identified by a cryptographic digest rather than by a
+version label, so that a later rebuild cannot silently substitute different
+software. The Python packages are pinned
 to exact versions: \texttt{torch==2.6.0}, \texttt{ninja==1.11.1.1},
 \texttt{openai==2.41.1}, \texttt{datasets==5.0.0} and \texttt{modal==1.5.0}.
 The KernelBench dataset is pinned to one revision, so a later upstream edit
 cannot silently change the problems.
 
-Two settings deserve mention because they affect the numbers directly.
-
-TF32 arithmetic is disabled for both matrix multiplication and cuDNN. Left on,
-TF32 reduces precision in a way that differs between GPU generations, which
-would have confounded the comparison between the L4 and the T4 in
-Section~\ref{sec:crossgpu}. Disabling it makes a numerical disagreement
+One setting affects the numbers directly. TF32 arithmetic is disabled for both
+matrix multiplication and cuDNN, because it reduces precision differently
+between GPU generations and would otherwise confound the comparison in
+Section~\ref{sec:crossgpu}. With it disabled, a numerical disagreement is
 attributable to the kernel rather than to the hardware.
-
-Every \texttt{KFAULT\_*} setting is baked into the image. Modal does not
-forward local environment variables into containers, and the configuration is
-read container-side, so a value set only in the local shell is ignored without
-warning. Section~\ref{sec:validation} describes what that cost before it was
-found.
 
 \subsection{Caching and provenance}
 
-Generation is expensive and classification is not. The two are therefore cached
-under independent keys, which is what makes re-labelling affordable.
+Generations and classifications are cached under independent keys, so a change
+to the classifier can be applied to kernels already generated. The generation
+key identifies the request to the model and excludes the GPU, which is why one
+kernel can be classified on both devices without being generated twice.
 
-The \textbf{generation key} covers the model, the reasoning effort, the
-problem, the sample index, the temperature, a hash of the prompt, and the
-client library version. It deliberately excludes the GPU. The same kernel can
-then be classified on both devices without being paid for twice, which is what
-makes the cross-GPU comparison cheap enough to run at all.
-
-The \textbf{classification key} covers the generation artefact, the seed, the
-sanitizer flag, the GPU, the CUDA image, the pinned packages, the schema
-version, and the per-call time budget when it differs from the default.
-
-Behind both keys sits one principle: \emph{a field that decides an outcome must
-be part of the key}. The per-call budget is the clearest case. It determines
-whether a slow kernel is labelled \texttt{runtime} or goes on to a full battery
-run, so two budgets must never share a cache entry. It is omitted from the key
-when it holds its default value, which keeps entries written before the budget
-existed valid.
-
-The separation gives two distinct operations. \texttt{-{}-force} re-classifies
-a kernel while reusing the stored model output, so a change to the battery
-costs GPU time but no model calls. \texttt{-{}-regen} requests genuinely new
-generations. Every result in this dissertation was produced with the schema
-version recorded alongside it, so a record classified under an older battery
-can be identified and re-run.
+One principle governs both keys: \emph{a field that decides an outcome must be
+part of the key}. The forward-time limit is the clearest case, since it decides
+whether a slow kernel is labelled \texttt{runtime} or proceeds to the battery.
+Each record also carries the version of the classifier that produced it, so
+results from a superseded version can be excluded, as
+Section~\ref{sec:validation} describes.
 
 \subsection{Validation}
 \label{sec:validation}
 
 A classifier that assigns the wrong label produces confident and worthless
-results. Validation therefore runs at two levels.
+results, so validation runs at two levels. The first is a suite of unit tests
+over the pure logic, needing no GPU, covering selection and deduplication,
+chain outcomes, the rate calculations, the dtype and out-of-memory rules in the
+battery, the repair policy and the cache keys. The second is known-answer
+validation: eleven
+hand-written kernels of known category are run through the real classifier on
+real hardware, covering correct kernels with weights, mutating inputs,
+structured returns and nested inputs, plus one kernel each for the four failure
+categories and one that is correct but too slow. The silent case is right on
+contiguous input and wrong on strided input, so it exercises the probe the
+results depend on most. The check asserts the category and, where it matters,
+the failing stage, since \texttt{runtime} is reachable several ways.
 
-The first is 86 unit tests over the pure modules, covering the analysis
-functions, the battery bookkeeping, the repair feedback, the prompt handling
-and the cache keys. They need no GPU and complete in four milliseconds.
+This layer earned its cost: four defects were found that would each have
+corrupted the headline number, and all four had passed the unit tests.
 
-The second is known-answer validation. Eleven hand-written kernels of known
-category are run through the real classifier on real hardware: correct kernels
-with weights, with mutating inputs, with structured returns and with nested
-inputs, plus one kernel each for \texttt{syntactic}, \texttt{runtime},
-\texttt{functional} and \texttt{silent}, and one that is correct but too slow.
-The silent case is a kernel that is right on contiguous input and wrong on
-strided input, so it exercises the probe the results depend on most.
-
-The check asserts the category and, where it matters, the failing stage.
-\texttt{runtime} is reachable several ways, so a slow kernel could otherwise be
-recorded as correct for the wrong reason.
-
-This layer earned its cost. Three defects were found that would each have
-corrupted the headline number, and all three passed the unit tests.
-
-The first was silent in the strict sense. The routine that copies tensors
-preserved their values but not their strides, so the \texttt{non\_contig} probe
-was handing the kernel a contiguous tensor and testing nothing. Every
-false-pass rate measured before the fix was measured with the study's main
-probe disabled.
-
-The second was the opposite failure. The \texttt{fp16} probe reported a crash
-on every passing kernel, because a kernel compiled against
-\texttt{data\_ptr<float>()} cannot accept half input at all. A probe that fires
-on 100\% of cases carries no information; it measures the harness.
-
-The third was environmental. Because \texttt{KFAULT\_GPU} was not forwarded
-into the image, 70 records were labelled with the wrong device. The fix was to
-read the device name on the GPU itself and treat that as ground truth, rather
-than trusting a value the container may never have received.
+The most serious was silent in the strict sense: the routine that copies
+tensors preserved their values but not their strides, so the
+\texttt{non\_contig} probe was handing the kernel a contiguous tensor and
+testing nothing. Every false-pass rate measured before the fix was measured
+with the study's main probe disabled. The second was its opposite, an
+\texttt{fp16} probe that reported a crash on every passing kernel, from which
+the rule in Section~\ref{sec:battery} follows: a probe firing on 100\% of cases
+measures the harness. The third was environmental, a setting that failed to
+reach the container, leaving 70 records labelled with the wrong device; the fix
+was to read the device name on the GPU itself. The fourth was a missing reseed,
+so reference and candidate held different weights on any problem with learnable
+parameters and every kernel looked wrong.
 
 \subsection{Reproducibility}
 
-No figure or table in this report contains a hand-copied number. The cache is
-exported to \texttt{attempts.csv} and \texttt{chains.csv}, together with 2{,}829
-kernel source files; every figure is then generated from those files by one
-script. Re-running that script reproduces the figures exactly, and the exported
-dataset allows the analysis to be repeated without access to a GPU.
+No figure or table in this report contains a hand-copied number. Every result
+derives from two exported tables, one row per classified kernel and one row per
+repair chain, together with the generated kernel sources. The code was developed
+under Git version control, and the code, the exported tables and the kernel
+sources are submitted alongside this report as a single archive.
+
+Two kinds of reproducibility should be distinguished. The analysis is exactly
+reproducible: re-running the scripts over the submitted tables reproduces every
+figure and table here, and does so without access to a GPU, but the generations
+are not. Temperature is zero, so the model was asked for a deterministic response,
+but the provider serves one model through an alias that is repointed to newer
+checkpoints over time, and the pipeline did not record which checkpoint
+answered. Repeating the generation step at a later date may therefore query a
+different model.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 5. EVALUATION -- 10 pages
@@ -1012,9 +1118,17 @@ dataset allows the analysis to be repeated without access to a GPU.
 \subsection{Dataset and scale}
 
 The experiment produced \textbf{2{,}852 classified kernel attempts} arranged
-into \textbf{1{,}196 repair chains}, with no missing cells: every model was run
-on every Level 2 problem, in both arms, on both GPUs. Table~\ref{tab:dataset}
-gives the distribution of labels over all attempts.
+into \textbf{1{,}196 repair chains}. Every model was run on every Level 2
+problem, in both arms, on both GPUs, which is 1{,}200 chains in total. The
+2{,}852 attempts derive from 1{,}448 distinct generations, because the
+generation key excludes the GPU (Section~\ref{sec:architecture}): most kernels
+are generated once and classified on both devices, and 1{,}404 were classified
+on both. Four chains are absent: DeepSeek V3.2 on the T4 for problem 98 in the reasoning arm, and
+problems 37, 43 and 68 in the direct arm. Each of these was lost to a container
+failure that returned no classification, so no label of any kind exists for
+them, and they are excluded from every denominator rather than counted as
+failures. Table~\ref{tab:dataset} gives the distribution of labels over the
+attempts that were recorded.
 
 \begin{table}[h]
 \centering
@@ -1034,55 +1148,61 @@ total               & 2{,}852 & \\
 \bottomrule
 \end{tabular}
 \caption{Label distribution over all attempts, including intermediate repair
-turns. \texttt{error} marks a harness fault rather than a property of the
-kernel.}
+turns. \texttt{empty} marks a response containing no code block, and
+\texttt{error} a harness fault rather than a property of the kernel. Neither is
+counted as an accepted kernel.}
 \label{tab:dataset}
 \end{table}
 
-Two observations before the analysis. First, wrong answers outnumber build
-failures: \texttt{functional} is the largest category. Writing CUDA that
-compiles is easier than writing CUDA that computes. Second, 172 attempts are
-silent, which is 6\% of all attempts but a much larger share of the attempts
-that KernelBench would call correct. That share is the subject of
-Section~\ref{sec:relocation}.
+Wrong answers outnumber build failures, so writing CUDA that compiles is easier
+than writing CUDA that computes. The 172 silent attempts are 6\% of the total
+but a much larger share of those KernelBench would accept, which is the subject
+of Section~\ref{sec:relocation}.
 
 \subsection{Reasoning and the failure distribution}
 
-Table~\ref{tab:passrates} reports the pass rate for each model and arm, before
-and after repair.
+Table~\ref{tab:passrates} reports the acceptance rate and the full-battery pass
+rate for each model and arm, before and after repair.
 
 \begin{table}[h]
 \centering
-\begin{tabular}{llrr}
+\begin{tabular}{llrrrrr}
 \toprule
-model & arm & one-shot & after repair \\
+& & & \multicolumn{2}{c}{acceptance rate} & \multicolumn{2}{c}{full-battery pass rate} \\
+\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+model & arm & $n$ & one-shot & repaired & one-shot & repaired \\
 \midrule
-GLM-5         & think  & 58.5\% & 74.5\% \\
-GLM-5         & direct & 38.5\% & 47.5\% \\
-DeepSeek V3.2 & think  & 41.2\% & 74.4\% \\
-DeepSeek V3.2 & direct &  2.0\% &  5.6\% \\
-Qwen3-235B    & think  & 66.5\% & 82.5\% \\
-Qwen3-235B    & direct &  2.0\% &  7.0\% \\
+GLM-5         & think  & 200 & 68.5\% & 93.5\% & 58.5\% & 74.5\% \\
+GLM-5         & direct & 200 & 49.0\% & 64.5\% & 38.5\% & 47.5\% \\
+DeepSeek V3.2 & think  & 199 & 49.7\% & 92.5\% & 41.2\% & 74.4\% \\
+DeepSeek V3.2 & direct & 197 &  3.0\% & 13.7\% &  2.0\% &  5.6\% \\
+Qwen3-235B    & think  & 200 & 71.5\% & 91.5\% & 66.5\% & 82.5\% \\
+Qwen3-235B    & direct & 200 & 13.5\% & 21.5\% &  2.0\% &  7.0\% \\
 \bottomrule
 \end{tabular}
-\caption{Pass rate per model and arm, out of 200 chains each (100 problems on
-two GPUs). The arms differ only in whether reasoning is enabled.}
+\caption{Acceptance rate and full-battery pass rate per model and arm. GLM-5
+and Qwen3-235B use $n = 200$ chains per arm; DeepSeek V3.2 uses $n = 199$ in
+the reasoning arm and $n = 197$ in the direct arm, because four chains were
+lost to container failures. The acceptance rate is what KernelBench reports;
+the full-battery rate counts only kernels that also survive every probe. Their
+difference is the share of all chains ending silent; Table~\ref{tab:falsepass}
+instead expresses those silent failures as a proportion of accepted kernels.}
 \label{tab:passrates}
 \end{table}
 
-Reasoning matters enormously. Two of the three models are close to unusable
-without it: DeepSeek V3.2 and Qwen3-235B each solve 2\% of Level 2 problems on
-the first attempt with reasoning disabled, against 41\% and 67\% with it
-enabled. GLM-5 degrades more gracefully, but still loses twenty points.
-
-This confirms what the benchmarks already report \citep{ouyang2025kernelbench,
-zhu2026cudabench} and I claim no novelty for it. It matters here for one
-reason only. The direct arm produces so few passing kernels that any rate
-computed over them rests on a handful of cases, and I treat direct-arm
-percentages with caution throughout. The reasoning arm carries the argument.
+Reasoning substantially increases performance, consistent with what the
+benchmarks already report \citep{ouyang2025kernelbench, zhu2026cudabench}.
+Measured by the full-battery pass rate, DeepSeek V3.2 and Qwen3-235B each solve
+2\% of problems on the first attempt with reasoning disabled, against 41\% and
+67\% with it enabled. This matters here for a methodological reason. For two of the three models the
+direct arm produces too few accepted kernels for a rate over them to be
+meaningful, six for DeepSeek V3.2 and twenty-seven for Qwen3-235B at the first
+attempt, so the primary analysis focuses on the reasoning arm. GLM-5's direct
+arm is better populated and is reported alongside the others in
+Table~\ref{tab:falsepass}, but is read with the same caution.
 
 Figure~\ref{fig:taxonomy} shows how the whole distribution moves under repair
-rather than the pass rate alone.
+rather than a single aggregate rate.
 
 \begin{figure}[htbp]
 \centering
@@ -1096,9 +1216,20 @@ not shrink with them.}
 \subsection{Repair relocates failures}
 \label{sec:relocation}
 
-Repair works, by the benchmark's own measure. It raises the pass rate in every
-model and every arm, by as much as 33 points for DeepSeek V3.2 in the reasoning
-arm. On that evidence a practitioner would adopt it without hesitation.
+Repair works by the benchmark's own measure: it raises the acceptance rate in
+every model and every arm, by as much as 43 points for DeepSeek V3.2 in the
+reasoning arm. By that metric alone, repair would appear uniformly beneficial.
+
+It is not useless by the stronger measure either. The full-battery pass rate,
+which counts only kernels that also survive every probe, rises in every one of
+the six conditions in Table~\ref{tab:passrates}, and 165 chains are repaired
+into a genuine pass. Repair does produce correct kernels that a first attempt
+did not.
+
+The claim of this section is narrower, and worse for the benchmark. The kernels
+repair adds to the accepted population are silently wrong far more often than
+those accepted at the first attempt, and the benchmark cannot tell the two
+apart.
 
 The false-pass rate tells a different story. Table~\ref{tab:falsepass} reports,
 among the kernels KernelBench would accept, the share that fail the stress
@@ -1120,40 +1251,72 @@ Qwen3-235B    & direct & 85.2\% (23/27)  & 67.4\% (29/43) \\
 \bottomrule
 \end{tabular}
 \caption{False-pass rate, with counts, as silent over silent plus pass. In the
-reasoning arm the rate rises for every model. Direct-arm denominators are small
-and those rows should not be read as rates.}
+reasoning arm the rate rises for every model. Direct-arm estimates have small
+denominators and should therefore be interpreted cautiously.}
 \label{tab:falsepass}
 \end{table}
 
 In the reasoning arm the false-pass rate rises for all three models, by between
-2.8 and 5.7 points. Figure~\ref{fig:relocation} shows the movement directly.
+2.4 and 5.7 points. Figure~\ref{fig:relocation} shows the movement directly.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.9\linewidth]{figures/fig1_relocation.pdf}
-\caption{Repair raises the pass rate and the false-pass rate together. Every
-model moves upward, so a harness that reports only the pass rate records this
-as unambiguous improvement.}
+\caption{Repair raises the acceptance rate and the false-pass rate together.
+Every model moves upward, so a harness that reports only the acceptance rate
+records this as unambiguous improvement.}
 \label{fig:relocation}
 \end{figure}
 
-The direct arm is less clean and I do not lean on it. GLM-5 and DeepSeek V3.2
-rise as expected, but Qwen3-235B falls, from 85.2\% to 67.4\%. With 27 passing
-kernels at the start, a change of that size reflects a handful of individual
-problems rather than a trend.
+The direct arm is less consistent and carries correspondingly less weight.
+GLM-5 and DeepSeek V3.2 rise as expected, but Qwen3-235B falls, from 85.2\% to
+67.4\%. The fall is arithmetic rather than a reversal of the effect. With
+reasoning disabled, Qwen3-235B produced only 27 accepted kernels at the first
+attempt, of which 23 were silent. Repair then added ten genuine passes and six
+further silent failures, so the count of silent kernels rose while the
+proportion fell. Rates computed over so few kernels move sharply on a handful
+of problems, which is why the direct arm is not used to support the
+argument.
 
 The mechanism is visible in the chains themselves. Counting outcomes across all
 1{,}196 chains, repair rescued 165 chains to a genuine pass and converted
-\textbf{79 chains from a visible failure into a silent one}. Those 79 are the
+\textbf{79 chains from a visible failure into a silent one}, which are the
 relocations. Combining the two gives the number a benchmark would report:
 
 \begin{quote}
-Repair produced 244 chains that KernelBench scores as a success. 79 of them,
+Repair produced 244 chains that KernelBench scores as a success, of which 79,
 \textbf{almost one in three}, are silent failures.
 \end{quote}
 
 The effect is not confined to one model. It appears in GLM-5 (32 chains),
 DeepSeek V3.2 (33) and Qwen3-235B (14), and splits evenly across the two GPUs.
+
+This comparison can be tested directly. Repair produces a set of accepted
+kernels that is disjoint from the set accepted on the first attempt,
+so the two can be compared without the shifting denominators that make a
+before-and-after rate awkward. Fisher's exact test is used because the outcome is
+binary and some cells are small enough that a chi-squared approximation would be
+unreliable. The unit of observation is one chain, meaning one problem attempted
+by one model in one arm on one device. The pooled analysis treats chains as
+independent, and because problem identities recur across models and devices the
+pooled values should be read cautiously; per-model and per-device results are
+reported alongside them. If repair produced work of the same quality as a
+first attempt, the share of silent failures would be the same in both groups,
+and it is not. In the reasoning arm, 12.4\% of first-attempt acceptances are silent
+against 25.7\% of repair-produced ones, and Fisher's exact test gives
+$p = 0.0002$. Pooling the two GPUs counts each problem twice, so the test was
+also run on each device alone, where it holds independently at $p = 0.0058$ on the
+L4 and $p = 0.0089$ on the T4. Per model the result is significant for GLM-5
+($p = 0.0021$) and Qwen3-235B ($p = 0.0301$) but not for DeepSeek V3.2
+($p = 0.4567$), whose first attempts were already unusually often silent.
+
+Bootstrapping over the 100 problems gives the false-pass rate itself an
+interval, and those intervals are wide: 14.6\% [6.8, 23.4] rising to 20.3\%
+[12.5, 28.7] for GLM-5, with similar overlap for the other two models. The rise
+within any single model is therefore not established on its own. The claim this
+work makes is the one the Fisher tests support, that \emph{the kernels repair
+produces are more often silently wrong than the kernels accepted on the first
+attempt}.
 Figure~\ref{fig:outcomes} breaks the chains down by outcome.
 
 \begin{figure}[htbp]
@@ -1165,11 +1328,13 @@ are recorded as repair successes by a standard harness.}
 \label{fig:outcomes}
 \end{figure}
 
-A typical relocation is unremarkable to look at. One DeepSeek V3.2 chain on
-Level 2 problem 22 begins with a trivial and very loud failure, a missing
-Python import, and ends one turn later with a kernel that builds, runs, matches
-the reference on the standard input, and returns the wrong answer on a strided
-one. The model was told only that a name was undefined. It fixed exactly that,
+A typical relocation is unremarkable to look at. On Level 2 problem 22,
+DeepSeek V3.2 begins with a trivial and very loud failure, an undefined name
+because a Python module was never imported, and returns one turn later with a
+kernel that builds, runs, matches the reference on the standard input, and
+disagrees with it on a strided one. The same sequence occurs on both GPUs.
+Nearly two thirds of all relocations, 47 of 79, complete in a single turn like
+this. The model was told only that a name was undefined. It fixed exactly that,
 and in rewriting the kernel introduced an assumption about memory layout that
 nothing in its feedback could contradict.
 
@@ -1185,8 +1350,8 @@ evidence rather than the repair of a fault.
 \subsection{Repair and model ranking}
 \label{sec:ranking}
 
-\citet{liu2023evalplus} found that an insufficient test suite does not only
-depress scores, it reorders models. The same effect appears here, and repair
+\citet{liu2023evalplus} found that an insufficient test suite does not merely
+depress scores; it reorders models. The same effect appears here, and repair
 causes it.
 
 Table~\ref{tab:ranking} compares the two readings defined in
@@ -1205,29 +1370,39 @@ DeepSeek V3.2 & 92.5\% & 74.4\% & \\
 Qwen3-235B    & 91.5\% & \textbf{82.5\%} & \\
 \bottomrule
 \end{tabular}
-\caption{Pass rate in the reasoning arm after repair, under both readings. The
-strict column orders the models one way and the extended column reverses it.}
+\caption{Post-repair correctness rate in the reasoning arm under the strict and
+extended readings. The extended column additionally requires survival of the
+full stress battery. No accepted kernel in this slice failed a within-contract
+probe, so the strict column here coincides exactly with the acceptance rate of
+Table~\ref{tab:passrates}; in general the strict rate can only be lower. The
+two columns do not place the models in the same order.}
 \label{tab:ranking}
 \end{table}
 
-The rankings disagree. Under the strict reading Qwen3-235B is last; under the
-extended reading it is first by eight points. The disagreement is not
-inevitable, and it is created by repair: at turn 0 both readings agree that
-Qwen3-235B leads.
+The two readings disagree about the order. Under the strict reading
+Qwen3-235B places last; under the extended reading it leads by eight points.
+The disagreement is created by repair, since at turn~0 both readings place
+Qwen3-235B first. The ordering under the extended reading is consistent across
+both GPUs but is established statistically only when they are pooled, so the
+reliable claim is that the two readings cease to agree, not that one particular
+order is correct.
 
 The strict column also loses its ability to separate the models. After three
-repair turns all three sit between 91.5\% and 93.5\%, and a paired McNemar test
-over problems finds no significant difference in any pair, with $p > 0.52$
-throughout. Under the extended reading Qwen3-235B is ahead of both others with
+repair turns all three sit between 91.5\% and 93.5\%, and McNemar's test detects
+no significant difference in any pair, with $p > 0.52$ throughout. This
+is a failure to detect a difference rather than evidence that none exists. The
+unit of pairing here is one problem on one device, since the two models being
+compared attempted exactly the same problems on exactly the same hardware. Under the extended reading Qwen3-235B is ahead of both others with
 $p = 0.037$ when the two GPUs are pooled. That pooling treats the devices as
 independent when they are not, and the per-device tests give $p$ between 0.12
 and 0.23, so the ordering is consistent rather than established. The strict
-result, that the three models become statistically indistinguishable, is the
-firmer half and needs no such qualification.
+result, that no pairwise difference is detected at all, is the firmer half and
+needs no such qualification.
 
-Repair therefore does more than inflate the benchmark. It compresses three
-genuinely different models into a tie the benchmark cannot resolve, while a
-stronger oracle still tells them apart.
+Repair therefore does more than inflate the benchmark. It compresses the strict
+rates into a narrow band of 91.5\% to 93.5\% in which no pairwise difference is
+detected, while the extended reading produces a wider spread and a different
+ordering.
 
 \subsection{Which probe does the work}
 \label{sec:probes}
@@ -1248,44 +1423,39 @@ the \emph{only} probe that fires in 146 of them, or 85\%. The extreme-value
 probe accounts for most of the remainder at 21 attempts. The small-magnitude,
 zero and repeated-draw probes contribute almost nothing.
 
-I state this plainly because it is the strongest objection to the work. The
-headline finding rests largely on a single relation, that a kernel must not
-change its answer when the same values arrive through different strides.
+This is the strongest objection to the work, since the headline finding rests
+largely on a single relation. Two pieces of evidence suggest the probe is
+discriminating rather than a blanket penalty: it is passed by the large
+majority of generated kernels, and the fix is one line, since a kernel that
+calls \texttt{.contiguous()} on its inputs satisfies it, which some models
+already do unprompted.
 
-Two pieces of evidence suggest the probe is discriminating rather than a
-blanket penalty. It is passed by the large majority of generated kernels, so it
-does not simply condemn everything. And the fix is one line, since a kernel
-that calls \texttt{.contiguous()} on its inputs satisfies it, which some models
-already do unprompted. The probe separates kernels that handle strides from
-kernels that assume them away, and that distinction is real.
-
-Even so, a reviewer may fairly say that these kernels satisfy KernelBench's
-stated contract, which promises only contiguous inputs. That is why every
-false-pass number in this chapter is also reported under the strict reading,
-and why Section~\ref{sec:limitations} treats the dependency as a threat to
-validity rather than a detail.
+A plausible alternative interpretation remains available: kernels that assume
+contiguity comply with KernelBench's stated contract, which promises only
+contiguous inputs. Section~\ref{sec:ranking} therefore compares the strict and
+extended readings directly, and Section~\ref{sec:limitations} treats the
+dependency as a threat to validity rather than a detail.
 
 \subsection{Cross-GPU divergence}
 \label{sec:crossgpu}
 
 Running every kernel on two GPU generations allows a further question: does the
-same kernel behave differently on different hardware? Of the 1{,}404 kernels
-classified on both an L4 and a T4, 55 received different labels.
+same kernel behave differently on different hardware?
 
-Almost all of these are reshuffles among visible failures, such as a kernel
-that crashes on one device and returns a wrong answer on the other. Nine
-involve a harness fault rather than the kernel. Exactly one pair looked like
-the case of real interest, a kernel passing on one device and silently failing
-on the other, and inspection shows it is an artefact: on the 16\,GB T4 all
-eight probes were skipped for lack of memory, so the battery never ran and the
-kernel was recorded as passing without being tested.
+Of the 1{,}404 kernels classified on both an L4 and a T4, 55 received different
+labels. Almost all are reshuffles among visible failures, such as a kernel that
+crashes on one device and returns a wrong answer on the other. Nine involve a
+harness fault rather than the kernel.
 
-The honest conclusion is therefore negative. \textbf{No kernel in this dataset
-genuinely passed on one GPU and silently failed on the other.} Silent failures
-are a property of the code rather than of the device, at least across these two
-architectures. This is a useful thing to know, because it means the false-pass
-rates reported above are not an accident of hardware, but it is not a
-contribution and I do not present it as one.
+One pair looked like the case of real interest, passing on one device and
+failing silently on the other. On inspection it was not. Every check that could
+run had been skipped for lack of memory on the 16\,GB T4, so the battery never
+ran at all.
+
+\textbf{No evidence of architecture-specific silent failure was observed between
+the L4 and the T4 in this dataset.} A hardware artefact is therefore an
+unlikely explanation for the false-pass rates reported above. Two architectures
+cannot establish device independence in general.
 
 \subsection{Performance of passing kernels}
 
@@ -1301,207 +1471,148 @@ battery. The median gain is small for every model.}
 \label{fig:speedup}
 \end{figure}
 
-The gains are modest. Median speedups are 1.14$\times$ for GLM-5,
-1.07$\times$ for DeepSeek V3.2 and 1.04$\times$ for Qwen3-235B, and between
-76\% and 83\% of passing kernels beat PyTorch at all. There is an
-uncomfortable pattern here: Qwen3-235B is the most correct model and the
-slowest, which suggests that correctness and speed are being traded against
-each other rather than achieved together.
+The gains are modest: median speedups of 1.14$\times$ for GLM-5, 1.08$\times$
+for DeepSeek V3.2 and 1.04$\times$ for Qwen3-235B. Between 76\% and 83\% of
+passing kernels achieve any speedup over PyTorch.
 
-One result must be reported separately because it is a flaw in the benchmark
+There is a further pattern in those numbers. Qwen3-235B has the highest
+observed full-battery pass rate and the lowest median speedup. This descriptive
+pattern suggests a possible trade-off between correctness and speed.
+
+One result must be reported separately, because it is a flaw in the benchmark
 rather than a property of any model. Level 2 problem 80,
 \texttt{80\_Gemm\_Max\_Subtract\_GELU}, is degenerate: its output is identically
 zero for every input. GLM-5's reasoning arm proved this in a comment and
-returned a zero tensor, which is a correct implementation of the specified
-module and ran 2{,}671$\times$ faster than PyTorch on the L4 and 6{,}514$\times$
-faster on the T4. The kernel is not cheating. The task is broken.
+returned a zero tensor. That is a correct implementation of the specified
+module, and it ran 2{,}671$\times$ faster than PyTorch on the L4 and
+6{,}514$\times$ faster on the T4. The kernel implements the specification
+correctly; the specification itself is degenerate.
 
-I exclude this problem from the speedup statistics above, and report it here
-because anyone quoting KernelBench speedups should know that a single
-degenerate task can move an average by a large amount.
+This problem is excluded from the speedup statistics above. It is reported here
+because a single degenerate task can move an average by a large amount, which
+matters for anyone quoting KernelBench speedups.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 6. LIMITATIONS -- 2 pages
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Limitations and Threats to Validity}
+\section{Limitations}
 \label{sec:limitations}
 
-\textbf{The stress battery is also an incomplete oracle.} The argument of this
-dissertation is that KernelBench decides correctness with a procedure that
-cannot see certain faults. Exactly the same criticism applies to the battery.
-It inspects seven transformations, and a kernel whose fault appears only under
-an eighth will be recorded as passing. Every false-pass rate reported in
-Chapter~5 is therefore a \emph{lower bound} on the true rate, not an estimate
-of it. This does not weaken the finding, because a lower bound that rises under
-repair still shows that repair hides faults, but it does mean the numbers
-should be read as ``at least this many'' rather than as a measurement of how
-much wrong code exists.
+\textbf{Scope.} The results cover KernelBench Level 2, three models that expose
+reasoning as a runtime switch, and two GPU architectures. They therefore speak
+to operator fusion rather than to whole network architectures, and to models
+whose reasoning can be disabled without changing weights.
 
-\textbf{One probe carries most of the result.} As Section~\ref{sec:probes}
-reports, the non-contiguous probe is the only probe that fires in 85\% of
-silent failures. The finding depends heavily on a single metamorphic relation.
-A reviewer may reasonably object that KernelBench promises contiguous inputs,
-so a kernel that assumes them satisfies the contract it was given. I accept
-that this reading is defensible, which is why every false-pass number is also
-reported under the strict definition, where such kernels are not condemned. The
-two readings disagree about the size of the problem. They agree about its
-direction, because the ranking result in Section~\ref{sec:ranking} holds under
-both.
+\textbf{The battery is itself an incomplete oracle.} The criticism this work
+makes of KernelBench applies to the battery as well. It applies seven kinds of
+transformation, and a kernel whose fault appears only under some other
+transformation is recorded as passing. The reported false-pass rates are
+therefore lower bounds, the failures a fixed battery detects, rather than
+estimates of how many accepted kernels are wrong. The observed increase shows that a fixed battery detects
+more silent failures after repair; the true rate remains unknown.
 
-\textbf{The study has no confidence intervals.} Temperature is zero and one
-sample is drawn per problem, per arm, per turn, so each cell of the design is a
-single greedy generation. This makes the experiment exactly reproducible and
-cheap, but it means a reported rate such as 20.3\% has no error bar, and a
-difference of two or three points between two cells cannot be called
-significant. Two things partly compensate. The design is paired, so comparisons
-\emph{between} models over the same problems can be tested, and
-Section~\ref{sec:ranking} does exactly that with McNemar tests. The relocation
-effect also replicates independently across three models and two GPUs, which is
-a weaker form of evidence than a confidence interval but not a negligible one.
-Drawing five samples per problem for one model would close this gap and is the
-first piece of further work I would do.
+\textbf{One relation carries most of the result.} The non-contiguous probe
+accounts for 85\% of silent failures on its own. Kernels that assume contiguity
+comply with the contract KernelBench states, so Section~\ref{sec:ranking}
+reports the two readings side by side. They disagree about the magnitude of the
+effect and agree about its direction.
 
-\textbf{\texttt{compute-sanitizer} never ran.} Stage 2b reports
-\texttt{Device not supported} on both GPUs available through Modal, so memory
-races and out-of-bounds reads that do not crash the program went undetected
-throughout. This is uncomfortable for a study about silent failures, because
-some kernels labelled \texttt{pass} or \texttt{silent} may hold memory faults
-that a working sanitizer would have raised as \texttt{runtime}. The direction
-of the error is not obvious: such kernels might have been reclassified as loud
-failures, which would lower the false-pass rate, or the sanitizer might have
-exposed further silent faults, which would raise it. I could not run the stage
-on the hardware available and I do not know which.
+\textbf{Design choices bound the evidence.} One greedy sample per cell measures
+no variation between repeated generations of the same kernel, so the claims
+made are those the paired and disjoint-set comparisons in
+Sections~\ref{sec:relocation} and~\ref{sec:ranking} support. The sanitizer
+stage is implemented and validated but unsupported on the GPUs available, so
+memory faults that do not crash the program fall outside these results.
+Relocation is established for one repair configuration, three turns driven by
+compiler-level feedback, which is the configuration in common use. Finally, the
+comparison tolerance is tighter than the one KernelBench states, so a kernel
+differing by between the two thresholds is counted here as a visible failure
+rather than an accepted one. Such kernels never reach the battery, and the
+direction of the resulting effect on the false-pass rate is not determined.
 
-\textbf{The scope is narrow in three ways.} Only Level 2 of KernelBench was
-used, so every claim should be read as applying to operator fusion rather than
-to whole architectures. Only three models were evaluated, and they were chosen
-because their reasoning can genuinely be switched off, which restricts the
-findings to models that expose reasoning as a runtime parameter. All three were
-served through a single provider, and one of them through an alias,
-\texttt{deepseek.v3-v1:0}, that the provider repoints to newer checkpoints over
-time. The pipeline did not record which checkpoint answered, so that model is
-identified by documentation rather than by captured evidence.
-
-\textbf{The repair loop is one design among many.} Three turns, one prompt
-format, and feedback consisting of the compiler message or the numerical
-mismatch. A loop that returned richer feedback, or that ran for ten turns,
-might relocate more failures or fewer. What this study establishes is that
-relocation happens under a plausible and widely used configuration, not that it
-happens under all of them.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% 7. CONCLUSION -- 3 pages
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Conclusion and Future Work}
+\section{Conclusion}
 
 \subsection{Summary of findings}
 
-Repair works by the measure the field uses, and that measure is not trustworthy
-after repair has been applied.
+Repair works by the measure the field uses, and that measure becomes
+untrustworthy once repair has been applied.
 
-Across 2{,}852 classified kernels, iterative repair raised the pass rate for
-every model in every condition, by as much as 33 points. It raised the
-false-pass rate at the same time. In the reasoning arm the share of apparently
-correct kernels that fail the stress battery rose from 14.6\% to 20.3\% for
-GLM-5, from 17.2\% to 19.6\% for DeepSeek V3.2, and from 7.0\% to 9.8\% for
-Qwen3-235B. Counting whole chains rather than rates makes the effect plainer:
-of the 244 chains that repair converted into a benchmark success, 79 ended as
-silent failures.
+Across 2{,}852 classified kernel attempts, repair raised the acceptance rate for
+every model in every condition, by as much as 43 points, and raised the
+false-pass rate alongside it. In the reasoning arm, the share of accepted
+kernels that fail the stress battery rose from 14.6\% to 20.3\% for GLM-5, from
+17.2\% to 19.6\% for DeepSeek V3.2, and from 7.0\% to 9.8\% for Qwen3-235B.
 
-The mechanism is not mysterious. A repair loop returns compiler errors, crashes
-and failed comparisons, and returns nothing about memory layout. The model
-fixes what it is shown. In a typical relocation a kernel fails with an
-undefined name, which is about as loud as a failure can be, and returns one
-turn later as a kernel that builds, runs, matches the reference on the standard
-input and is wrong on a strided one. Both \citet{olausson2024selfrepair} and
-\citet{huang2024cannot} predict this, the first because repair is bounded by
-the quality of its feedback and the second because improvement measured against
-a visible signal is not evidence of correctness. What this work adds is the
-measurement.
+Counting chains rather than rates makes the effect plainer: of the 244 chains
+repair converted into a benchmark success, 79 ended as silent failures. The
+kernels repair makes acceptable are silently wrong more than twice as often as
+those accepted at the first attempt, 25.7\% against 12.4\%, and that holds on
+each GPU separately.
 
-A second result follows from the first. After repair the three models sit
-between 91.5\% and 93.5\% under KernelBench's own contract, and no pairwise
-test distinguishes them. Under the stress battery they remain clearly
-separated, and their order reverses. Repair does not only inflate the score. It
-removes the benchmark's ability to tell good models from weaker ones.
+The mechanism is straightforward. A repair loop returns compiler errors,
+crashes and failed comparisons, and nothing at all about memory layout, so the
+model fixes what it is shown. In a typical case a kernel fails with
+an undefined name, and returns one turn later building, running, matching the
+reference on the standard input, and disagreeing with it on a strided one. Both
+\citet{olausson2024selfrepair} and \citet{huang2024cannot} predict this
+behaviour; what this work adds is the measurement.
 
-Two smaller results are worth recording. No kernel in this dataset genuinely
-passed on one GPU architecture and failed silently on the other, so silent
-failure is a property of the code rather than of the device. And Level 2
-problem 80 is degenerate, returning zero for every input, which one model
-detected and exploited for a speedup above 6{,}000$\times$. That is a flaw in
-the benchmark and it affects anyone quoting its performance figures.
+A second result follows. After repair the three models sit between 91.5\% and
+93.5\% under KernelBench's own contract, and no pairwise test detects a
+difference between them. Under the extended reading the spread is wider and the
+order is different. Repair does not only inflate the score;
+it reduces the benchmark's ability to tell the models apart.
 
-\subsection{Conclusions against the objectives}
+\subsection{Against the objectives}
 
-Objective~1 was met. The classifier assigns one of five categories to every
-kernel and was validated against eleven kernels of known category on real
-hardware, alongside 86 unit tests. That validation caught three defects which
-would each have corrupted the headline number, including one that had silently
-disabled the study's principal probe.
+The classifier and the withheld battery were built and validated, meeting
+objectives~1 and~2. Validation against eleven known-answer kernels caught four
+defects that would each have corrupted the headline number, including one that
+had silently disabled the study's principal probe. The dataset, kernel sources
+and analysis scripts are submitted alongside this report, meeting objective~5,
+and no figure or table in this report contains a hand-copied number.
 
-Objective~2 was met. The battery encodes seven metamorphic relations, and its
-results are withheld from the repair prompt, so a silent kernel ends its chain
-without the model ever learning that a probe disagreed. This is what makes the
-false-pass rate a measurement rather than a record of how quickly a model can
-fit a held-out test.
+Objective~3 was met, and produced the central result. Every Level 2 problem was
+run for three models, in two arms, on two architectures, yielding 1{,}196 of a
+possible 1{,}200 chains, and the false-pass rate rises under repair for every
+model in the reasoning arm.
 
-Objective~3 was met in full. Every one of the 100 Level 2 problems was run for
-three models, in two arms, on two GPU architectures, for up to four turns, with
-no missing cells.
+Objective~4 was met with one qualification. The observed ranking changes after
+repair, and repair is what causes the change, since both readings agree at
+turn~0. Under the strict reading no
+pairwise difference is detected, at $p > 0.52$ in every pair. Which model leads under the extended reading is
+consistent across both GPUs but reaches significance only when they are pooled,
+so it is reported as a direction rather than a settled order.
 
-Objective~4 was met, with a qualification. The ranking does change, and the
-change is caused by repair, since both readings agree at turn~0. The strict
-half of that result, that the models become statistically indistinguishable, is
-established with $p > 0.52$ in every pair. The extended half, that Qwen3-235B
-leads, is consistent across both GPUs but reaches significance only when the
-two devices are pooled, which overstates the evidence. I report it as a
-direction rather than a settled ordering.
-
-Objective~5 was met. The dataset, the kernel sources and the analysis scripts
-are released, and no figure or table in this report contains a hand-copied
-number.
-
-The aim stated in Section~\ref{sec:aim} can therefore be answered. Repair
+The aim set out in Section~\ref{sec:aim} can therefore be answered. Repair
 improves benchmark scores, and part of that improvement is the disappearance of
 evidence rather than the correction of a fault. A repaired kernel is not
-reliably more correct. It is reliably harder to catch.
+reliably more correct; it is reliably harder to catch.
 
 \subsection{Future work}
 
-\textbf{Confidence intervals.} The clearest gap is the single greedy sample per
-cell. Drawing five samples at a non-zero temperature for one model in the
-reasoning arm would put error bars on the false-pass rate and settle the
-ranking question. This needs no new code and roughly one to two days of
-compute, and it is the first thing I would do.
+\textbf{Repeated-generation variability.} Drawing several samples per problem at
+a non-zero temperature would add the dimension the present design does not
+measure. Applied to one model it would quantify how much output varies between
+attempts; applied to all three it would quantify the stability and uncertainty
+of the observed ranking. It requires no new code.
 
-\textbf{Feed the battery back on purpose.} This study withholds stage 4 so that
-the measurement survives. The opposite experiment is now well defined and
-interesting: reveal the battery to the model and measure how many turns it
-takes to satisfy it. If the false-pass rate collapses within one or two turns,
-that is evidence the model is fitting the probes rather than learning to
-respect strides, and it would put a number on how fragile any fixed oracle is.
+\textbf{Reveal the battery deliberately.} This study withholds stage 4 so that
+the measurement survives. The inverse experiment is well defined: expose the
+battery and count the turns a model needs to satisfy it. A false-pass rate that
+collapses within one or two turns would quantify how quickly any fixed oracle
+can be fitted.
 
-\textbf{A wider battery.} Because the battery is itself an incomplete oracle,
-every rate reported here is a lower bound. Adding relations, for example over
-batch size, non-contiguous outputs and mixed dtypes, would tighten that bound
-and reduce the dependence on the single relation that currently carries 85\% of
-the result.
-
-\textbf{Level 3 and other hardware.} Extending to whole architectures would
-test whether relocation survives at greater kernel complexity, and running on a
-platform where \texttt{compute-sanitizer} is supported would close the largest
-methodological gap in the classifier.
-
-\textbf{A benchmark that reports both numbers.} The practical recommendation
-from this work is small and cheap. A kernel benchmark should report the pass
-rate together with the share of passes that survive a stress battery. The
-second number costs a few seconds per kernel, and without it a repair loop can
-raise the first number by hiding faults, with nothing in the report to show it.
+\textbf{A second number for kernel benchmarks.} The practical consequence of
+this work is small and easy to adopt. A kernel benchmark that reports only an
+acceptance rate cannot distinguish a repaired kernel from a concealed failure.
+Reporting alongside it the share of accepted kernels that survive a stress
+battery would make that difference visible at negligible cost.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % BIBLIOGRAPHY -- outside the 40 page limit
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\addcontentsline{toc}{section}{References}
 \bibliographystyle{apalike}
 \bibliography{kfault}
 
@@ -1512,12 +1623,169 @@ raise the first number by hiding faults, with nothing in the report to show it.
 \appendix
 
 \section{Generation and Repair Prompts}
-% TODO verbatim prompt text.
+\label{app:prompts}
 
-\section{Per-Problem Results}
-% TODO tables from data/attempts.csv.
+\subsection*{One-shot generation}
 
-\section{A Degenerate KernelBench Task}
-% TODO task 80 kernel source.
+The generation prompt is KernelBench's own one-shot CUDA prompt at FP32
+precision, reproduced so that results remain comparable with published
+KernelBench pass rates. It is assembled in four parts: the problem statement
+below, a worked example consisting of an element-wise addition module and its
+CUDA replacement, the reference module for the problem being attempted, and the
+closing instruction. The worked example is KernelBench's and is not reproduced
+here.
+
+\begin{quote}\small
+You write custom CUDA operators to replace the pytorch operators in the given
+architecture to get speedups.
+
+You have complete freedom to choose the set of operators you want to replace.
+You may make the decision to replace some operators with custom CUDA operators
+and leave others unchanged. You may replace multiple operators with custom
+implementations, consider operator fusion opportunities (combining multiple
+operators into a single kernel, for example, combining matmul+relu), or
+algorithmic changes (such as online softmax). You are only limited by your
+imagination.
+\end{quote}
+
+After the worked example and the reference module, the prompt closes with:
+
+\begin{quote}\small
+Note: The kernels should be optimized for FP32 (32-bit floating point)
+precision.
+
+Optimize the architecture named Model with custom CUDA operators! Name your
+optimized output architecture ModelNew. Output the new code in codeblocks.
+Please generate real code, NOT pseudocode, make sure the code compiles and is
+fully functional. Just output the new model code, no other text, and NO testing
+code!
+\end{quote}
+
+\subsection*{Repair}
+
+A repair turn restates the whole generation prompt, appends the failed attempt,
+appends the feedback for its category, and closes with a fixed instruction. The
+feedback is the only part that varies between turns.
+
+\begin{quote}\small
+\textit{[the full generation prompt above]}
+
+You already tried this, and it failed:
+
+\textit{[the previous attempt, verbatim, inside a fenced Python code block]}
+
+\textit{[category feedback, below]}
+
+Fix the problem and output the complete corrected ModelNew code in one code
+block. No explanation, no testing code.
+\end{quote}
+
+\subsection*{Category feedback}
+
+For \texttt{syntactic}, \texttt{runtime} and \texttt{functional} the feedback
+names the category and the failing stage, then quotes the compiler message, the
+exception or the reported mismatch, truncated to the last 800 characters
+because \texttt{nvcc} places the decisive line last. A memory-violation excerpt
+from \texttt{compute-sanitizer} is appended when one is available.
+
+\begin{quote}\small
+Your previous kernel failed at stage: \textit{[category]}\\
+Failing step: \textit{[stage]}\\
+Build error: / Runtime error: / Output did not match the reference:\\
+\textit{[message tail]}
+\end{quote}
+
+Two cases carry a written explanation instead, because the stored message is
+the harness's own and says nothing the model can act on. A kernel killed by the
+classification time limit is told that it did not finish, that the limit covers
+compilation plus roughly ninety forward calls, and that the cause is either a
+hang or a kernel too slow to measure; it is then asked to check every loop
+bound, to ensure all threads reach any \texttt{\_\_syncthreads()}, and not to
+serialise work onto one thread. A kernel rejected by the forward-time limit of
+Stage~2b is given its measured time, told that the logic may be sound and the
+speed is the problem, and asked to use more parallelism, coalesce global memory
+accesses and avoid per-thread loops over large dimensions.
+
+An empty response receives only: \emph{Your previous answer contained no code
+block.}
+
+No feedback is generated for \texttt{silent} or \texttt{pass}, which end the
+chain. This is the withholding described in Section~\ref{sec:repairloop}: a kernel
+judged silent is never told that a probe disagreed.
+
+\section{One Worked Example per Category}
+\label{app:examples}
+
+Each example is a real generated kernel from the dataset. All five were
+produced by Qwen3-235B in the \texttt{think} arm and classified on the
+Ada-generation L4, so they differ only in problem and turn. The identifiers
+match the file names in the released dataset, and the complete sources for all
+five are included there.
+
+\subsection*{\texttt{syntactic}: the code does not build}
+
+\noindent Qwen3-235B, L4, problem 81, \texttt{think} arm, turn 0. For this
+category and the next, the CUDA the model generated is shown rather than the
+whole file, since the evidence is the error rather than the code.
+
+\lstinputlisting[language=C++]{code/p81_think_t0_kernel.cu}
+
+\noindent The source does not compile, so no kernel is produced:
+\texttt{Error building extension 'fused\_op'}. Classifier verdict:
+\texttt{syntactic}, at the build stage.
+
+\subsection*{\texttt{runtime}: it builds but crashes}
+
+\noindent Qwen3-235B, L4, problem 44, \texttt{think} arm, turn 0.
+
+\lstinputlisting[language=C++]{code/p44_think_t0_kernel.cu}
+
+\noindent The kernel compiles, but the shapes it assumes do not match those it
+is given, and the first forward call raises \texttt{size mismatch, got input
+(16), mat (16x64), vec (128)}. Classifier verdict: \texttt{runtime}, at the
+standard forward pass.
+
+\subsection*{\texttt{functional}: it runs and returns the wrong answer}
+
+\noindent Qwen3-235B, L4, problem 28, \texttt{think} arm, turn 1.
+
+\lstinputlisting{code/p28_think_t1.py}
+
+\noindent The kernel executes, but its output disagrees with the reference
+module on the standard input. Classifier verdict: \texttt{functional}, output
+value mismatch. This is the loud failure KernelBench detects, and it is
+reported back to the model.
+
+\subsection*{\texttt{silent}: it passes the benchmark and is wrong}
+
+\noindent Qwen3-235B, L4, problem 28, \texttt{think} arm, turn 2. This is
+the repair of the example above, in the same chain.
+
+\lstinputlisting{code/p28_think_t2.py}
+
+\noindent The kernel now agrees with the reference on the standard input, so
+KernelBench accepts it. The fault is the indexing: the pointers obtained from
+\texttt{data\_ptr<float>()} are walked one element at a time, which is correct
+only when the tensor is laid out contiguously. Given the same values through
+non-unit strides, the kernel reads the wrong elements.
+
+\noindent Classifier verdict: \texttt{silent}, non-contiguous probe. This
+single chain contains the effect the dissertation reports: a visible
+\texttt{functional} failure at turn 1 becomes an invisible one at turn 2, and a
+standard harness records the change as a successful repair.
+
+\subsection*{\texttt{pass}: correct under the full battery}
+
+\noindent Qwen3-235B, L4, problem 5, \texttt{think} arm, turn 1. The CUDA
+section is shown; the surrounding module is unremarkable.
+
+\lstinputlisting[language=C++]{code/p5_think_t1_kernel.cu}
+
+\noindent This kernel makes its layout assumption explicit rather than relying
+on it, by requesting a contiguous copy before taking a raw pointer. That costs
+one line and makes the pointer arithmetic valid whatever layout the caller
+supplies. Fifty of the accepted kernels in this dataset do the same unprompted.
+
+\noindent Classifier verdict: \texttt{pass}, surviving every probe.
 
 \end{document}

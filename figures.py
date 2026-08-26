@@ -11,6 +11,7 @@ their accessibility checks are recorded in docs/figures/paper/README.md.
 
 import csv
 import os
+import statistics
 from collections import Counter, defaultdict
 
 import matplotlib
@@ -141,7 +142,7 @@ def fig_relocation(chains):
     A slope chart, because the claim is about DIRECTION of change between two
     states, not about the two magnitudes independently.
     """
-    rows = [c for c in chains if c["device"] == "L4" and c["arm"] == "think"]
+    rows = [c for c in chains if c["arm"] == "think"]
     data = {}
     for model in MODEL_ORDER:
         subset = [c for c in rows if c["model"] == model]
@@ -188,7 +189,7 @@ def fig_relocation(chains):
             fontweight="bold",
         )
         ax.annotate(
-            f"{s1} of {t1} passing kernels",
+            f"{s1} of {t1} accepted kernels",
             (1.06, label_y[model] - 0.95),
             ha="left",
             va="center",
@@ -201,23 +202,7 @@ def fig_relocation(chains):
     ax.set_xticklabels(["one-shot", "after 3 repair turns"], fontsize=10, color=INK_2)
     ax.set_ylim(0, 24)
     ax.yaxis.set_major_formatter(PercentFormatter())
-    ax.set_ylabel("of passing kernels, share that are silent failures", fontsize=9)
-    ax.set_title(
-        "Repair raises the pass rate and the false-pass rate together\n",
-        fontsize=12.5,
-        color=INK,
-        loc="left",
-        pad=22,
-        fontweight="bold",
-    )
-    ax.text(
-        0,
-        1.035,
-        "reasoning arm, KernelBench Level 2, L4 - every model moves upward",
-        transform=ax.transAxes,
-        fontsize=9,
-        color=INK_2,
-    )
+    ax.set_ylabel("share of accepted kernels that are silent failures", fontsize=9)
     save(fig, "fig1_relocation")
 
 
@@ -234,7 +219,7 @@ def fig_outcomes(chains):
     color = {"rescued": GREEN, "hidden": SILENT, "still_failing": INK_MUTED}
     ink_on = {"rescued": "white", "hidden": INK, "still_failing": "white"}
 
-    rows = [c for c in chains if c["device"] == "L4"]
+    rows = list(chains)
     counts = {
         m: Counter(c["outcome"] for c in rows if c["model"] == m) for m in MODEL_ORDER
     }
@@ -274,14 +259,6 @@ def fig_outcomes(chains):
     ax.set_yticklabels(MODEL_ORDER, fontsize=10, color=INK)
     ax.set_ylim(len(MODEL_ORDER) - 0.5, -0.5)  # GLM-5 on top
     ax.set_xlabel("repair chains", fontsize=9, color=INK_2)
-    ax.set_title(
-        "For every ~25 kernels repair rescues, it hides ~16 more",
-        fontsize=12,
-        color=INK,
-        loc="left",
-        pad=14,
-        fontweight="bold",
-    )
     handles = [
         plt.Rectangle((0, 0), 1, 1, color=color[k], label=label[k]) for k in order
     ]
@@ -303,7 +280,7 @@ def fig_taxonomy(chains):
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.9), sharey=True)
     for ax, arm in zip(axes, ("think", "direct")):
         style(ax, xgrid=True)
-        rows = [c for c in chains if c["device"] == "L4" and c["arm"] == arm]
+        rows = [c for c in chains if c["arm"] == arm]
         labels, index = [], 0
         for model in MODEL_ORDER:
             subset = [c for c in rows if c["model"] == model]
@@ -367,15 +344,6 @@ def fig_taxonomy(chains):
         ncol=5,
         labelcolor=INK_2,
     )
-    fig.suptitle(
-        "Repair eliminates syntactic failures and grows the silent category",
-        fontsize=12,
-        color=INK,
-        x=0.09,
-        ha="left",
-        y=1.02,
-        fontweight="bold",
-    )
     save(fig, "fig3_taxonomy")
 
 
@@ -402,7 +370,7 @@ def fig_probes(attempts):
         "fresh_seed_2": "fresh random draw 2",
         "fresh_seed_3": "fresh random draw 3",
     }
-    silent = [a for a in attempts if a["category"] == "silent" and a["device"] == "L4"]
+    silent = [a for a in attempts if a["category"] == "silent"]
     caught = Counter()
     for row in silent:
         for probe in probes:
@@ -436,15 +404,8 @@ def fig_probes(attempts):
     ax.set_yticklabels([pretty[p] for p in ordered], fontsize=9, color=INK_2)
     ax.set_ylim(len(ordered) - 0.5, -0.5)
     ax.set_xlabel(
-        f"silent failures caught (n={len(silent)} silent kernels)", fontsize=9
-    )
-    ax.set_title(
-        "One probe finds almost every silent failure",
-        fontsize=12,
-        color=INK,
-        loc="left",
-        pad=12,
-        fontweight="bold",
+        f"silent failures caught (n={len(silent)} silent classification attempts)",
+        fontsize=9,
     )
     save(fig, "fig4_probes")
 
@@ -452,15 +413,17 @@ def fig_probes(attempts):
 # ----------------------------------------------------------------- figure 5
 def fig_speedup(attempts):
     """Correct kernels are barely faster than PyTorch."""
+    # Problem 80 returns zero for every input, so its "speedup" is a property
+    # of the task rather than the kernel. Excluded by name, not by a cutoff.
     rows = [
         a
         for a in attempts
-        if a["category"] == "pass" and a["device"] == "L4" and a["speedup"]
+        if a["category"] == "pass" and a["speedup"] and a["problem_id"] != "80"
     ]
     by_model = defaultdict(list)
     for row in rows:
         value = float(row["speedup"])
-        if 0 < value < 10:  # excludes one 2670x outlier, annotated below
+        if value > 0:
             by_model[row["model"]].append(value)
 
     fig, ax = plt.subplots(figsize=(6.8, 3.6))
@@ -479,7 +442,7 @@ def fig_speedup(attempts):
             linewidth=0.5,
             zorder=3,
         )
-        median = values[len(values) // 2]
+        median = statistics.median(values)
         ax.plot(
             [median, median],
             [index - 0.24, index + 0.24],
@@ -507,14 +470,6 @@ def fig_speedup(attempts):
     ax.set_ylim(len(MODEL_ORDER) - 0.35, -0.85)  # GLM-5 on top
     ax.set_xlim(0, 3.2)
     ax.set_xlabel("speedup vs PyTorch reference (higher is faster)", fontsize=9)
-    ax.set_title(
-        "Kernels that pass are barely faster than the code they replace",
-        fontsize=12,
-        color=INK,
-        loc="left",
-        pad=12,
-        fontweight="bold",
-    )
     save(fig, "fig5_speedup")
 
 

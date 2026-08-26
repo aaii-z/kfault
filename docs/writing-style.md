@@ -5,8 +5,12 @@ Tjarko Lange (robust-kbench, Evolution Transformer, LLMs as Evolution
 Strategies). Both write the same way.
 
 **One adaptation.** Both papers are multi-author and say "we". This
-dissertation has one author, so write **"I"** throughout: *I introduce*,
-*I find*, *I chose*. Never "we", never "the author".
+dissertation uses neither "we" nor "I". Write **impersonally**: *This project
+introduces*, *the results show*, *the random generator is reseeded*. Never
+"we", never "I", never "the author".
+
+The acknowledgement is the one exception, where "I would like to thank" is
+conventional and correct.
 
 ---
 
@@ -59,8 +63,10 @@ let alone building a general verifier with absolute certainty."*
 
 This is how you justify empirical testing instead of proof.
 
-**8. Active voice, first person, short declarative sentences.**
-"I find", not "it can be observed that". One idea per sentence.
+**8. Direct, impersonal, short declarative sentences.**
+"The results show", not "it can be observed that". Impersonal does not mean
+vague: prefer "the random generator is reseeded three times" over "reseeding
+was performed". One idea per sentence.
 
 ---
 
@@ -68,9 +74,10 @@ This is how you justify empirical testing instead of proof.
 
 - **"In recent years, ..."** — neither author ever opens this way.
 - **Hedging stacks**: "may potentially suggest that". Write "shows".
-- **Passive constructions that hide the actor**: "it was decided that".
-  Write "I chose".
-- **"We"** — wrong for a single-author dissertation.
+- **Passive constructions that hide a decision**: "it was decided that".
+  Name the decision instead: "the sanitizer stage was included because ...".
+  Impersonal phrasing should still say what was done and why.
+- **"We" or "I"** — this dissertation is written impersonally throughout.
 - **Sections that end with a summary.** End with a criticism or a consequence.
 - **Author-by-author literature recitals.** Group paragraphs by claim, not by
   paper. "Three systems report speedups without checking generalisation

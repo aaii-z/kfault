@@ -2,25 +2,29 @@ import unittest
 
 from kfault.prompts import strip_fences, strip_reasoning
 
+# (input, expected) for the response parser. A truncated reasoning block must
+# yield nothing rather than leaking reasoning text into the compiled kernel.
+CASES = (
+    (
+        strip_reasoning,
+        "<reasoning>hidden ```bad```</reasoning>\n```python\nclass ModelNew: pass\n```",
+        "```python\nclass ModelNew: pass\n```",
+    ),
+    (strip_reasoning, "prefix<reasoning>truncated", ""),
+    (strip_fences, "```python3\nclass ModelNew: pass\n```", "class ModelNew: pass"),
+    (
+        strip_fences,
+        "```text\nexample\n```\n```py\nclass ModelNew: pass\n```",
+        "class ModelNew: pass",
+    ),
+)
+
 
 class PromptParsingTests(unittest.TestCase):
-    def test_completed_reasoning_is_removed(self):
-        text = (
-            "<reasoning>hidden ```bad```</reasoning>\n"
-            "```python\nclass ModelNew: pass\n```"
-        )
-        self.assertEqual(strip_reasoning(text), "```python\nclass ModelNew: pass\n```")
-
-    def test_unclosed_reasoning_is_empty(self):
-        self.assertEqual(strip_reasoning("prefix<reasoning>truncated"), "")
-
-    def test_python3_fence_tag_is_removed(self):
-        text = "```python3\nclass ModelNew: pass\n```"
-        self.assertEqual(strip_fences(text), "class ModelNew: pass")
-
-    def test_model_new_block_is_preferred(self):
-        text = "```text\nexample\n```\n```py\nclass ModelNew: pass\n```"
-        self.assertEqual(strip_fences(text), "class ModelNew: pass")
+    def test_response_parsing(self):
+        for function, text, expected in CASES:
+            with self.subTest(function=function.__name__, text=text[:40]):
+                self.assertEqual(function(text), expected)
 
 
 if __name__ == "__main__":
